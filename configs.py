@@ -1,0 +1,27 @@
+from dataclasses import dataclass
+
+@dataclass
+class PrimaryConfig:
+    seq_len: int = 16
+    input_dim: int = 16 * 32
+    hidden_dim: int = 16 * 32 * 2
+    bottleneck: int = 16 * 2
+    learning_rate: float = 0.001
+    train_ratio: float = 0.99
+    batch_size: int = 1024
+    device: str = "cuda"
+    model_name: str = "primary_base"
+    encoding: str = "utf8"
+
+@dataclass
+class SecondaryConfig:
+    n: int = 2
+    bottleneck_primary: int = 8
+    input_dim: int = n * bottleneck_primary
+    hidden_dim: int = input_dim * 2
+    bottleneck: int = input_dim // 4
+    output_dim: int = input_dim + 1
+    learning_rate: float = 0.001
+    batch_size: int = 1024
+    device: str = "cuda"
+    model_name: str = "secondary"
