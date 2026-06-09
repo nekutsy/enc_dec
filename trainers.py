@@ -1,15 +1,19 @@
+# trainers.py
 import torch
 import os
 import sys
 import time
+import csv
 from torch.utils.data import TensorDataset, DataLoader
 
-def run_training(start_epoch, max_epochs, model, optimizer, criterion,
+def run_training(start_symbols, max_symbols, model, optimizer, criterion,
                 train_X, train_y, val_X, val_y, logger, model_path, batch_size,
                 symbols_per_sample, report_interval_symbols=1_000_000):
     os.makedirs(os.path.dirname(model_path), exist_ok=True)
     device = next(model.parameters()).device
-    total_symbols_per_epoch = len(train_X) * symbols_per_sample
+    total_symbols_in_dataset = len(train_X) * symbols_per_sample
+    total_train_symbols = min(max_symbols - start_symbols, total_symbols_in_dataset * 1000000)
+    # but we will loop over epochs until max_symbols reached
 
     train_dataset = TensorDataset(train_X, train_y if train_y is not None else train_X)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
@@ -20,21 +24,33 @@ def run_training(start_epoch, max_epochs, model, optimizer, criterion,
 
     scaler = torch.cuda.amp.GradScaler() if device.type == 'cuda' else None
 
+    total_symbols_processed = start_symbols
+    LOG_INTERVAL = 100_000_000
+    UPDATE_INTERVAL = 1_000_000
+
+    interval_train_loss_sum = 0.0
+    interval_train_samples = 0
+
+    next_update = total_symbols_processed + UPDATE_INTERVAL
+    next_log = total_symbols_processed + LOG_INTERVAL
+    last_update_time = time.time()
+    last_update_symbols = total_symbols_processed
+
+    if not hasattr(logger, 'initialized'):
+        logger.initialized = True
+        with open(logger.csv_path, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(['total_symbols', 'train_loss', 'val_loss'])
+
+    sys.stdout.write("\r\033[K")
+    sys.stdout.flush()
+
     try:
-        for epoch in range(start_epoch, max_epochs):
+        while total_symbols_processed < max_symbols:
             model.train()
-            train_loss_sum = 0.0
-            processed_train = 0
-            processed_symbols = 0
-            next_report = report_interval_symbols
-            epoch_start_time = time.time()
-            last_report_time = epoch_start_time
-            last_report_symbols = 0
-
-            sys.stdout.write(f"\rEpoch {epoch:6d} | Progress: 0.0% | Loss: --- | Speed: --- sym/s | Total ETA: ---s")
-            sys.stdout.flush()
-
             for x_batch, y_batch in train_loader:
+                if total_symbols_processed >= max_symbols:
+                    break
                 x_batch = x_batch.to(device, non_blocking=True)
                 y_batch = y_batch.to(device, non_blocking=True)
 
@@ -54,71 +70,86 @@ def run_training(start_epoch, max_epochs, model, optimizer, criterion,
 
                 batch_loss = loss.item()
                 batch_size_actual = x_batch.size(0)
-                train_loss_sum += batch_loss * batch_size_actual
-                processed_train += batch_size_actual
+                batch_symbols = batch_size_actual * symbols_per_sample
 
-                processed_symbols += batch_size_actual * symbols_per_sample
-                if processed_symbols >= next_report and processed_symbols < total_symbols_per_epoch:
-                    if device.type == 'cuda':
-                        torch.cuda.synchronize()
+                interval_train_loss_sum += batch_loss * batch_size_actual
+                interval_train_samples += batch_size_actual
+                total_symbols_processed += batch_symbols
+
+                if total_symbols_processed >= next_update:
                     current_time = time.time()
-                    time_delta = current_time - last_report_time
-                    symbols_delta = processed_symbols - last_report_symbols
+                    time_delta = current_time - last_update_time
+                    symbols_delta = total_symbols_processed - last_update_symbols
                     speed = symbols_delta / time_delta if time_delta > 0 else 0
+                    remaining = max_symbols - total_symbols_processed
+                    eta = remaining / speed if speed > 0 else 0
+                    avg_loss = interval_train_loss_sum / interval_train_samples if interval_train_samples > 0 else 0
+                    progress = (total_symbols_processed / max_symbols) * 100
 
-                    remaining_in_current = total_symbols_per_epoch - processed_symbols
-                    remaining_full_epochs = max_epochs - epoch - 1
-                    total_remaining_symbols = remaining_full_epochs * total_symbols_per_epoch + remaining_in_current
-                    total_eta = total_remaining_symbols / speed if speed > 0 else 0
-
-                    avg_loss = train_loss_sum / processed_train
-                    sys.stdout.write(
-                        f"\rEpoch {epoch:6d} | Progress: {processed_symbols/total_symbols_per_epoch*100:.1f}% "
-                        f"| Loss: {avg_loss:.6f} | Speed: {speed:.0f} sym/s | Total ETA: {total_eta:.0f}s"
-                    )
+                    sys.stdout.write(f"\r\033[KProgress: {progress:.1f}% | Loss: {avg_loss:.6f} | Speed: {speed:.0f} sym/s | ETA: {eta:.0f}s")
                     sys.stdout.flush()
-                    next_report += report_interval_symbols
-                    last_report_time = current_time
-                    last_report_symbols = processed_symbols
 
-            if device.type == 'cuda':
-                torch.cuda.synchronize()
-            avg_train_loss = train_loss_sum / processed_train if processed_train > 0 else 0.0
-            epoch_end_time = time.time()
-            epoch_duration = epoch_end_time - epoch_start_time
-            epoch_speed = total_symbols_per_epoch / epoch_duration if epoch_duration > 0 else 0
+                    next_update += UPDATE_INTERVAL
+                    last_update_time = current_time
+                    last_update_symbols = total_symbols_processed
 
-            remaining_epochs = max_epochs - epoch - 1
-            total_remaining_symbols = remaining_epochs * total_symbols_per_epoch
-            total_eta = total_remaining_symbols / epoch_speed if epoch_speed > 0 and remaining_epochs > 0 else 0
+                if total_symbols_processed >= next_log:
+                    avg_train_loss = interval_train_loss_sum / interval_train_samples if interval_train_samples > 0 else 0
 
-            model.eval()
-            val_loss_sum = 0.0
-            processed_val = 0
-            with torch.no_grad():
-                for x_batch, y_batch in val_loader:
-                    x_batch = x_batch.to(device, non_blocking=True)
-                    y_batch = y_batch.to(device, non_blocking=True)
-                    out = model(x_batch)
-                    loss = criterion(out, y_batch)
-                    val_loss_sum += loss.item() * x_batch.size(0)
-                    processed_val += x_batch.size(0)
+                    model.eval()
+                    val_loss_sum = 0.0
+                    processed_val = 0
+                    with torch.no_grad():
+                        for x_batch_val, y_batch_val in val_loader:
+                            x_batch_val = x_batch_val.to(device, non_blocking=True)
+                            y_batch_val = y_batch_val.to(device, non_blocking=True)
+                            out_val = model(x_batch_val)
+                            loss_val = criterion(out_val, y_batch_val)
+                            val_loss_sum += loss_val.item() * x_batch_val.size(0)
+                            processed_val += x_batch_val.size(0)
+                    avg_val_loss = val_loss_sum / processed_val if processed_val > 0 else 0
+                    model.train()
 
-            avg_val_loss = val_loss_sum / processed_val if processed_val > 0 else 0.0
+                    with open(logger.csv_path, 'a', newline='') as f:
+                        writer = csv.writer(f)
+                        writer.writerow([total_symbols_processed, avg_train_loss, avg_val_loss])
 
-            logger.log(epoch, avg_train_loss, avg_val_loss)
-            if remaining_epochs > 0:
-                sys.stdout.write(
-                    f"\rEpoch {epoch:6d} finished | Train Loss: {avg_train_loss:.6f} | Val Loss: {avg_val_loss:.6f} | Speed: {epoch_speed:.0f} sym/s | Total ETA: {total_eta:.0f}s\n"
-                )
-            else:
-                sys.stdout.write(
-                    f"\rEpoch {epoch:6d} finished | Train Loss: {avg_train_loss:.6f} | Val Loss: {avg_val_loss:.6f} | Speed: {epoch_speed:.0f} sym/s\n"
-                )
-            sys.stdout.flush()
+                    sys.stdout.write(f"\n[{total_symbols_processed} symbols] Train Loss: {avg_train_loss:.6f} | Val Loss: {avg_val_loss:.6f}\n")
+                    sys.stdout.write("\r\033[K")
+                    sys.stdout.flush()
+
+                    interval_train_loss_sum = 0.0
+                    interval_train_samples = 0
+                    next_log += LOG_INTERVAL
+
+            if total_symbols_processed >= max_symbols:
+                break
+
     except KeyboardInterrupt:
         print("\nTraining interrupted. Saving current model...")
         torch.save(model.state_dict(), model_path)
         raise
+
+    if interval_train_samples > 0:
+        avg_train_loss = interval_train_loss_sum / interval_train_samples
+        model.eval()
+        val_loss_sum = 0.0
+        processed_val = 0
+        with torch.no_grad():
+            for x_batch_val, y_batch_val in val_loader:
+                x_batch_val = x_batch_val.to(device, non_blocking=True)
+                y_batch_val = y_batch_val.to(device, non_blocking=True)
+                out_val = model(x_batch_val)
+                loss_val = criterion(out_val, y_batch_val)
+                val_loss_sum += loss_val.item() * x_batch_val.size(0)
+                processed_val += x_batch_val.size(0)
+        avg_val_loss = val_loss_sum / processed_val if processed_val > 0 else 0
+        with open(logger.csv_path, 'a', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow([total_symbols_processed, avg_train_loss, avg_val_loss])
+        sys.stdout.write(f"\n[{total_symbols_processed} symbols] Train Loss: {avg_train_loss:.6f} | Val Loss: {avg_val_loss:.6f}\n")
+        sys.stdout.flush()
+
     torch.save(model.state_dict(), model_path)
     print(f"Training finished. Model saved to {model_path}")
+    return total_symbols_processed

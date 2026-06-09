@@ -6,7 +6,7 @@ class PrimaryConfig:
     input_dim: int = 64 * 32
     hidden_dim: int = 64 * 32
     bottleneck: int = 64 * 2
-    learning_rate: float = 0.0001
+    learning_rate: float = 0.00005
     train_ratio: float = 0.99
     batch_size: int = 1024
     device: str = "cuda"

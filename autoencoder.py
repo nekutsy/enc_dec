@@ -1,3 +1,4 @@
+# autoencoder.py
 import os
 import sys
 import torch
@@ -7,7 +8,7 @@ from configs import PrimaryConfig
 from model import Autoencoder
 from data import load_text, prepare_data, split_into_chunks, vec2seq, export_latent_vectors
 from trainers import run_training
-from logger import CSVLogger, get_last_epoch
+from logger import CSVLogger, get_last_symbols
 
 def reconstruct_text(model, text: str, config: PrimaryConfig, device) -> str:
     model.eval()
@@ -29,7 +30,7 @@ def run_experiments():
     os.makedirs("sessions", exist_ok=True)
 
     seq_lens = [2, 4, 8, 16, 32]
-    epochs = 30
+    target_symbols = 30 * 1000000  # ~30M symbols total training (adjust as needed)
     encoding = "utf8"
 
     for seq_len in seq_lens:
@@ -80,9 +81,16 @@ def run_experiments():
         csv_path = os.path.join("sessions", f"training_losses_{base_filename}.csv")
 
         logger = CSVLogger(csv_path)
+        total_symbols_per_epoch = len(x_train) * config.seq_len
+        max_symbols = target_symbols
+        start_symbols = get_last_symbols(csv_path)
+
+        if start_symbols > 0:
+            print(f"Resuming from {start_symbols} symbols processed.")
+
         run_training(
-            start_epoch=0,
-            max_epochs=epochs,
+            start_symbols=start_symbols,
+            max_symbols=max_symbols,
             model=model,
             optimizer=optimizer,
             criterion=criterion,
@@ -114,11 +122,17 @@ def main():
     layer_sizes = [
         config.input_dim,
         config.hidden_dim * 4,
+        config.hidden_dim * 2,
         config.hidden_dim,
+        config.hidden_dim // 2,
         config.hidden_dim // 4,
+        config.hidden_dim // 8,
         config.bottleneck,
+        config.hidden_dim // 8,
         config.hidden_dim // 4,
+        config.hidden_dim // 2,
         config.hidden_dim,
+        config.hidden_dim * 2,
         config.hidden_dim * 4,
         config.input_dim
     ]
@@ -136,13 +150,16 @@ def main():
     print(f"CSV path: {csv_path}")
 
     optimizer = optim.AdamW(model.parameters(), lr=config.learning_rate)
-    criterion = nn.MSELoss() # BCEWithLogitsLoss или MSELoss
+    criterion = nn.MSELoss()
     logger = CSVLogger(csv_path)
 
-    current_epoch = get_last_epoch(csv_path) + 1 if os.path.isfile(csv_path) else 0
-    if current_epoch > 0:
-        print(f"Resuming from epoch {current_epoch}. Loading weights...")
+    start_symbols = get_last_symbols(csv_path)
+    if start_symbols > 0:
+        print(f"Resuming from {start_symbols} symbols processed. Loading weights...")
         model.load_state_dict(torch.load(model_path, map_location=device))
+
+    total_symbols_per_epoch = len(x_train) * config.seq_len
+    target_symbols = 30 * total_symbols_per_epoch  # 30 epochs equivalent
 
     print("Commands: <text to reconstruct>, 'resume N', 'export', 'quit'")
     while True:
@@ -152,14 +169,16 @@ def main():
         if user_input.lower().startswith('resume'):
             parts = user_input.split()
             if len(parts) == 2 and parts[1].isdigit():
-                extra = int(parts[1])
-                new_max = current_epoch + extra
-                print(f"Training for {extra} more epochs...")
+                extra_epochs = int(parts[1])
+                extra_symbols = extra_epochs * total_symbols_per_epoch
+                new_max = start_symbols + extra_symbols
+                print(f"Training for {extra_epochs} more epochs ({extra_symbols} symbols)...")
                 try:
-                    run_training(current_epoch, new_max, model, optimizer, criterion,
-                                 x_train, None, x_val, None, logger, model_path,
-                                 config.batch_size, config.seq_len)
-                    current_epoch = new_max
+                    start_symbols = run_training(
+                        start_symbols, new_max, model, optimizer, criterion,
+                        x_train, None, x_val, None, logger, model_path,
+                        config.batch_size, config.seq_len
+                    )
                 except KeyboardInterrupt:
                     print("\nTraining interrupted. Model not saved.")
                 print("Done.\n")
