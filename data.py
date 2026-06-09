@@ -1,17 +1,23 @@
 import os
+import glob
 import torch
 from torch.utils.data import Dataset
 
 def load_text(data_dir="data/dataset"):
+    txt_files = glob.glob(os.path.join(data_dir, "*.txt"))
     texts = []
-    for filename in ["tolstoy1.txt", "tolstoy2.txt", "MiM.txt", "PiN.txt", "TD1.txt", "TD2.txt", "BK.txt", "AK.txt", "Idiot.txt", "oblomov.txt", "podrostok.txt"]:
-        path = os.path.join(data_dir, filename)
-        if os.path.isfile(path):
-            with open(path, "r", encoding="utf8") as f:
-                texts.append(f.read())
-    if not texts:
+    if not txt_files:
+        print(f"No .txt files found in {data_dir}, using dummy text.")
         dummy = "Это тестовый текст для автоэнкодера. " * 50
         texts.append(dummy)
+    else:
+        print(f"Found {len(txt_files)} .txt file(s) in {data_dir}:")
+        for path in txt_files:
+            filename = os.path.basename(path)
+            with open(path, "r", encoding="utf8") as f:
+                content = f.read()
+                texts.append(content)
+                print(f"  - {filename}: {len(content)} characters")
     return "".join(texts)
 
 def seq2vec(seq: str, max_bits: int, encoding: str = "utf8"):
@@ -33,7 +39,7 @@ def seq2vec(seq: str, max_bits: int, encoding: str = "utf8"):
             byte_pos += len(ch_bytes)
             chars_used += 1
         return bits, chars_used
-    else:  # utf32
+    else:
         max_symbols = max_bits // 32
         chars_used = 0
         bits = []
