@@ -113,15 +113,13 @@ def main():
 
     layer_sizes = [
         config.input_dim,
-        config.hidden_dim * 16,
+        config.hidden_dim * 4,
         config.hidden_dim,
-        config.hidden_dim // 2,
-        config.hidden_dim // 8,
+        config.hidden_dim // 4,
         config.bottleneck,
-        config.hidden_dim // 8,
-        config.hidden_dim // 2,
+        config.hidden_dim // 4,
         config.hidden_dim,
-        config.hidden_dim * 16,
+        config.hidden_dim * 4,
         config.input_dim
     ]
 
@@ -138,7 +136,7 @@ def main():
     print(f"CSV path: {csv_path}")
 
     optimizer = optim.AdamW(model.parameters(), lr=config.learning_rate)
-    criterion = nn.MSELoss()
+    criterion = nn.MSELoss() # BCEWithLogitsLoss или MSELoss
     logger = CSVLogger(csv_path)
 
     current_epoch = get_last_epoch(csv_path) + 1 if os.path.isfile(csv_path) else 0

@@ -3,10 +3,10 @@ from dataclasses import dataclass
 @dataclass
 class PrimaryConfig:
     seq_len: int = 64
-    input_dim: int = 16 * 32
-    hidden_dim: int = 16 * 32
-    bottleneck: int = 16 * 2
-    learning_rate: float = 0.001
+    input_dim: int = 64 * 32
+    hidden_dim: int = 64 * 32
+    bottleneck: int = 64 * 2
+    learning_rate: float = 0.0001
     train_ratio: float = 0.99
     batch_size: int = 1024
     device: str = "cuda"

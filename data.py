@@ -1,5 +1,6 @@
 import os
 import glob
+import numpy as np
 import torch
 from torch.utils.data import Dataset
 
@@ -93,31 +94,32 @@ def split_into_chunks(text: str, max_bits: int, encoding: str = "utf8"):
 class TextBitDataset(Dataset):
     def __init__(self, text: str, config):
         self.config = config
-        max_bits = config.seq_len * 32
         self.encoding = config.encoding
+        max_bits = config.seq_len * 32
+        cache_dir = os.path.join("data", "cache")
+        os.makedirs(cache_dir, exist_ok=True)
+        cache_file = os.path.join(cache_dir, f"dataset_{config.seq_len}_{config.encoding}.pt")
+
+        if os.path.exists(cache_file):
+            self.data = torch.load(cache_file)
+            return
 
         if self.encoding == "utf8":
-            text_bytes = text.encode('utf-8')
-            bits = []
-            for b in text_bytes:
-                bits.extend([(b >> i) & 1 for i in range(7, -1, -1)])
-            chunks = []
-            for i in range(0, len(bits), max_bits):
-                chunk_bits = bits[i:i+max_bits]
-                if len(chunk_bits) < max_bits:
-                    chunk_bits += [0] * (max_bits - len(chunk_bits))
-                chunks.append(chunk_bits)
-            self.data = torch.tensor(chunks, dtype=torch.float32)
+            byte_data = text.encode('utf-8')
+            byte_array = np.frombuffer(byte_data, dtype=np.uint8)
+            bits_array = np.unpackbits(byte_array)
         else:
-            chunks = []
-            max_symbols = max_bits // 32
-            i = 0
-            while i < len(text):
-                chunk_text = text[i:i+max_symbols]
-                bits, _ = seq2vec(chunk_text, max_bits, "utf32")
-                chunks.append(bits)
-                i += max_symbols
-            self.data = torch.tensor(chunks, dtype=torch.float32)
+            codes = np.array([ord(ch) for ch in text], dtype=np.uint32)
+            byte_view = codes.view(dtype=np.uint8)
+            bits_array = np.unpackbits(byte_view)
+
+        total_bits = len(bits_array)
+        pad = (max_bits - total_bits % max_bits) % max_bits
+        if pad:
+            bits_array = np.pad(bits_array, (0, pad), constant_values=0)
+        chunks = bits_array.reshape(-1, max_bits).astype(np.float32)
+        self.data = torch.from_numpy(chunks)
+        torch.save(self.data, cache_file)
 
     def __len__(self):
         return len(self.data)
