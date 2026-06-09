@@ -10,6 +10,8 @@ from data import load_text, prepare_data, split_into_chunks, vec2seq, export_lat
 from trainers import run_training
 from logger import CSVLogger, get_last_symbols
 
+torch.set_float32_matmul_precision('high')
+
 def reconstruct_text(model, text: str, config: PrimaryConfig, device) -> str:
     model.eval()
     max_bits = config.seq_len * 32
@@ -30,7 +32,7 @@ def run_experiments():
     os.makedirs("sessions", exist_ok=True)
 
     seq_lens = [2, 4, 8, 16, 32]
-    target_symbols = 30 * 1000000  # ~30M symbols total training (adjust as needed)
+    target_symbols = 30 * 1000000
     encoding = "utf8"
 
     for seq_len in seq_lens:
@@ -81,8 +83,6 @@ def run_experiments():
         csv_path = os.path.join("sessions", f"training_losses_{base_filename}.csv")
 
         logger = CSVLogger(csv_path)
-        total_symbols_per_epoch = len(x_train) * config.seq_len
-        max_symbols = target_symbols
         start_symbols = get_last_symbols(csv_path)
 
         if start_symbols > 0:
@@ -90,7 +90,7 @@ def run_experiments():
 
         run_training(
             start_symbols=start_symbols,
-            max_symbols=max_symbols,
+            max_symbols=target_symbols,
             model=model,
             optimizer=optimizer,
             criterion=criterion,
@@ -122,17 +122,11 @@ def main():
     layer_sizes = [
         config.input_dim,
         config.hidden_dim * 4,
-        config.hidden_dim * 2,
         config.hidden_dim,
-        config.hidden_dim // 2,
         config.hidden_dim // 4,
-        config.hidden_dim // 8,
         config.bottleneck,
-        config.hidden_dim // 8,
         config.hidden_dim // 4,
-        config.hidden_dim // 2,
         config.hidden_dim,
-        config.hidden_dim * 2,
         config.hidden_dim * 4,
         config.input_dim
     ]
@@ -159,7 +153,7 @@ def main():
         model.load_state_dict(torch.load(model_path, map_location=device))
 
     total_symbols_per_epoch = len(x_train) * config.seq_len
-    target_symbols = 30 * total_symbols_per_epoch  # 30 epochs equivalent
+    target_symbols = 30 * total_symbols_per_epoch
 
     print("Commands: <text to reconstruct>, 'resume N', 'export', 'quit'")
     while True:

@@ -12,8 +12,6 @@ def run_training(start_symbols, max_symbols, model, optimizer, criterion,
     os.makedirs(os.path.dirname(model_path), exist_ok=True)
     device = next(model.parameters()).device
     total_symbols_in_dataset = len(train_X) * symbols_per_sample
-    total_train_symbols = min(max_symbols - start_symbols, total_symbols_in_dataset * 1000000)
-    # but we will loop over epochs until max_symbols reached
 
     train_dataset = TensorDataset(train_X, train_y if train_y is not None else train_X)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
@@ -22,10 +20,10 @@ def run_training(start_symbols, max_symbols, model, optimizer, criterion,
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False,
                             num_workers=2, pin_memory=True)
 
-    scaler = torch.cuda.amp.GradScaler() if device.type == 'cuda' else None
+    scaler = torch.amp.GradScaler('cuda') if device.type == 'cuda' else None
 
     total_symbols_processed = start_symbols
-    LOG_INTERVAL = 100_000_000
+    LOG_INTERVAL = 1_000_000_000
     UPDATE_INTERVAL = 1_000_000
 
     interval_train_loss_sum = 0.0
@@ -114,13 +112,16 @@ def run_training(start_symbols, max_symbols, model, optimizer, criterion,
                         writer = csv.writer(f)
                         writer.writerow([total_symbols_processed, avg_train_loss, avg_val_loss])
 
-                    sys.stdout.write(f"\n[{total_symbols_processed} symbols] Train Loss: {avg_train_loss:.6f} | Val Loss: {avg_val_loss:.6f}\n")
-                    sys.stdout.write("\r\033[K")
+                    sys.stdout.write(f"\r\033[K[{total_symbols_processed} symbols] Train Loss: {avg_train_loss:.6f} | Val Loss: {avg_val_loss:.6f}\n")
                     sys.stdout.flush()
 
                     interval_train_loss_sum = 0.0
                     interval_train_samples = 0
                     next_log += LOG_INTERVAL
+
+                    last_update_time = time.time()
+                    last_update_symbols = total_symbols_processed
+                    next_update = total_symbols_processed + UPDATE_INTERVAL
 
             if total_symbols_processed >= max_symbols:
                 break
@@ -147,7 +148,7 @@ def run_training(start_symbols, max_symbols, model, optimizer, criterion,
         with open(logger.csv_path, 'a', newline='') as f:
             writer = csv.writer(f)
             writer.writerow([total_symbols_processed, avg_train_loss, avg_val_loss])
-        sys.stdout.write(f"\n[{total_symbols_processed} symbols] Train Loss: {avg_train_loss:.6f} | Val Loss: {avg_val_loss:.6f}\n")
+        sys.stdout.write(f"\r\033[K[{total_symbols_processed} symbols] Train Loss: {avg_train_loss:.6f} | Val Loss: {avg_val_loss:.6f}\n")
         sys.stdout.flush()
 
     torch.save(model.state_dict(), model_path)
