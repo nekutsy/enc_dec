@@ -113,11 +113,15 @@ def main():
 
     layer_sizes = [
         config.input_dim,
+        config.hidden_dim * 16,
         config.hidden_dim,
-        config.hidden_dim,
+        config.hidden_dim // 2,
+        config.hidden_dim // 8,
         config.bottleneck,
+        config.hidden_dim // 8,
+        config.hidden_dim // 2,
         config.hidden_dim,
-        config.hidden_dim,
+        config.hidden_dim * 16,
         config.input_dim
     ]
 

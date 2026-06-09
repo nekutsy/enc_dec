@@ -2,9 +2,9 @@ from dataclasses import dataclass
 
 @dataclass
 class PrimaryConfig:
-    seq_len: int = 16
+    seq_len: int = 64
     input_dim: int = 16 * 32
-    hidden_dim: int = 16 * 32 * 2
+    hidden_dim: int = 16 * 32
     bottleneck: int = 16 * 2
     learning_rate: float = 0.001
     train_ratio: float = 0.99
