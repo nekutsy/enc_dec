@@ -35,17 +35,11 @@ def seq2vec(seq: str, max_bits: int):
     return bits, chars_used
 
 def vec2seq(vec):
-    chars = []
-    for i in range(0, len(vec), 21):
-        bits = vec[i:i+21]
-        if any(v > 0.5 for v in bits):
-            bits_int = [1 if v > 0.5 else 0 for v in bits]
-            codepoint = int(''.join(str(b) for b in bits_int), 2)
-            try:
-                chars.append(chr(codepoint))
-            except (ValueError, OverflowError):
-                chars.append('�')
-    return ''.join(chars)
+    arr = np.array(vec, dtype=np.float32).reshape(-1, 21)
+    powers = 2 ** np.arange(20, -1, -1)
+    codepoints = ((arr > 0.5) @ powers).astype(int)
+    valid_codes = codepoints[codepoints > 0]
+    return ''.join(chr(c) for c in valid_codes)
 
 def split_into_chunks(text: str, max_bits: int):
     chunks = []

@@ -5,39 +5,35 @@ class Autoencoder(nn.Module):
         super().__init__()
         self.name = name
         self.layer_sizes = layer_sizes
-        self.bottleneck_idx = layer_sizes.index(min(layer_sizes))
+        b_idx = len(layer_sizes) // 2
 
-        layers = []
-        for i in range(len(layer_sizes) - 1):
-            layers.append(nn.Linear(layer_sizes[i], layer_sizes[i+1]))
+        enc_layers = []
+        for i in range(b_idx):
+            enc_layers.append(nn.Linear(layer_sizes[i], layer_sizes[i+1]))
+            if i < b_idx - 1:
+                enc_layers.append(nn.BatchNorm1d(layer_sizes[i+1]))
+                enc_layers.append(nn.SiLU())
+
+        dec_layers = []
+        for i in range(b_idx, len(layer_sizes) - 1):
+            dec_layers.append(nn.Linear(layer_sizes[i], layer_sizes[i+1]))
             if i < len(layer_sizes) - 2:
-                layers.append(nn.BatchNorm1d(layer_sizes[i+1]))
-                layers.append(nn.SiLU())
+                dec_layers.append(nn.BatchNorm1d(layer_sizes[i+1]))
+                dec_layers.append(nn.SiLU())
 
-        self.net = nn.Sequential(*layers)
+        self.encoder = nn.Sequential(*enc_layers)
+        self.decoder = nn.Sequential(*dec_layers)
 
-        for layer in self.net:
-            if isinstance(layer, nn.Linear):
-                nn.init.orthogonal_(layer.weight, gain=0.5)
-                nn.init.constant_(layer.bias, 0.0)
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.orthogonal_(m.weight, gain=0.5)
+                nn.init.constant_(m.bias, 0.0)
 
-    def forward(self, x, to_bottleneck=False, from_bottleneck=False, z=None):
-        if to_bottleneck:
-            for i, layer in enumerate(self.net):
-                x = layer(x)
-                if i == self.bottleneck_idx:
-                    return x
-            return x
-        elif from_bottleneck:
-            x = z
-            for i, layer in enumerate(self.net[self.bottleneck_idx+1:], start=self.bottleneck_idx+1):
-                x = layer(x)
-            return x
-        else:
-            return self.net(x)
+    def forward(self, x):
+        return self.decode(self.encode(x))
 
     def encode(self, x):
-        return self.forward(x, to_bottleneck=True)
+        return self.encoder(x)
 
     def decode(self, z):
-        return self.forward(None, from_bottleneck=True, z=z)
+        return self.decoder(z)

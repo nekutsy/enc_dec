@@ -9,16 +9,9 @@ from logger import CSVLogger, get_last_epoch
 from trainers import run_training
 
 def create_sequences(latents, n):
-    num_vectors = latents.shape[0]
-    bottleneck = latents.shape[1]
-    sequences = []
-    for i in range(num_vectors - n + 1):
-        window = latents[i:i+n].reshape(-1)
-        target = torch.cat([window, torch.tensor([0.0])])
-        sequences.append((window, target))
-    X = torch.stack([seq[0] for seq in sequences])
-    y = torch.stack([seq[1] for seq in sequences])
-    return X, y
+    windows = latents.unfold(0, n, 1).transpose(1, 2).reshape(-1, n * latents.shape[1])
+    targets = torch.cat([windows, torch.zeros(windows.size(0), 1)], dim=1)
+    return windows, targets
 
 def main():
     config = SecondaryConfig()
@@ -41,11 +34,6 @@ def main():
     split = int(0.99 * len(X))
     X_train, X_val = X[indices[:split]], X[indices[split:]]
     y_train, y_val = y[indices[:split]], y[indices[split:]]
-
-    X_train = X_train.to(device)
-    y_train = y_train.to(device)
-    X_val = X_val.to(device)
-    y_val = y_val.to(device)
 
     input_dim = config.input_dim
     hidden = config.hidden_dim
@@ -77,13 +65,13 @@ def main():
     criterion = nn.MSELoss()
     logger = CSVLogger(csv_path)
 
-    current_epoch = get_last_epoch(csv_path) + 1 if os.path.isfile(csv_path) else 0
+    current_epoch = get_last_epoch(csv_path)
     if current_epoch > 0:
         model.load_state_dict(torch.load(model_path, map_location=device))
 
     run_training(
-        start_epoch=current_epoch,
-        max_epochs=100,
+        start_symbols=current_epoch,
+        max_symbols=100,
         model=model,
         optimizer=optimizer,
         criterion=criterion,

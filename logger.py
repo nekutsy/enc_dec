@@ -9,29 +9,21 @@ class CSVLogger:
 def get_last_symbols(csv_path):
     if not os.path.isfile(csv_path):
         return 0
-    with open(csv_path, 'r', newline='') as f:
-        reader = csv.DictReader(f)
-        last = 0
-        for row in reader:
-            try:
-                symbols = int(row['total_symbols'])
-                if symbols > last:
-                    last = symbols
-            except (ValueError, KeyError):
-                pass
-    return last
+    try:
+        with open(csv_path, 'rb') as f:
+            f.seek(0, 2)
+            size = f.tell()
+            if size < 256:
+                f.seek(0)
+            else:
+                f.seek(size - 256)
+            lines = f.read().decode('utf-8').strip().splitlines()
+            if len(lines) < 2:
+                return 0
+            last_line = lines[-1]
+            return int(last_line.split(',')[0])
+    except (ValueError, IndexError):
+        return 0
 
 def get_last_epoch(csv_path):
-    if not os.path.isfile(csv_path):
-        return 0
-    with open(csv_path, 'r', newline='') as f:
-        reader = csv.DictReader(f)
-        last = 0
-        for row in reader:
-            try:
-                epoch = int(row.get('epoch', 0))
-                if epoch > last:
-                    last = epoch
-            except (ValueError, KeyError):
-                pass
-    return last
+    return get_last_symbols(csv_path)

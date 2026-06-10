@@ -1,4 +1,3 @@
-# trainers.py
 import torch
 import os
 import sys
@@ -11,7 +10,6 @@ def run_training(start_symbols, max_symbols, model, optimizer, criterion,
                 symbols_per_sample, report_interval_symbols=1_000_000):
     os.makedirs(os.path.dirname(model_path), exist_ok=True)
     device = next(model.parameters()).device
-    total_symbols_in_dataset = len(train_X) * symbols_per_sample
 
     train_dataset = TensorDataset(train_X, train_y if train_y is not None else train_X)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
@@ -52,9 +50,9 @@ def run_training(start_symbols, max_symbols, model, optimizer, criterion,
                 x_batch = x_batch.to(device, non_blocking=True)
                 y_batch = y_batch.to(device, non_blocking=True)
 
-                optimizer.zero_grad()
+                optimizer.zero_grad(set_to_none=True)
                 if scaler is not None:
-                    with torch.autocast(device_type='cuda', dtype=torch.float16):
+                    with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
                         out = model(x_batch)
                         loss = criterion(out, y_batch)
                     scaler.scale(loss).backward()

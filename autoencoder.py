@@ -48,9 +48,6 @@ def run_experiments():
         )
 
         x_train, x_val = prepare_data(text, config)
-        if config.device == "cuda":
-            x_train = x_train.to("cuda")
-            x_val = x_val.to("cuda")
 
         layer_sizes = [
             config.input_dim,
@@ -114,19 +111,15 @@ def main():
 
     layer_sizes = [
         config.input_dim,
+        config.hidden_dim * 2,
         config.hidden_dim * 4,
         config.hidden_dim * 2,
-        config.hidden_dim,
-        config.hidden_dim // 2,
-        config.hidden_dim // 4,
-        config.hidden_dim // 8,
+        config.hidden_dim * 2,
         config.bottleneck,
-        config.hidden_dim // 8,
-        config.hidden_dim // 4,
-        config.hidden_dim // 2,
-        config.hidden_dim,
+        config.hidden_dim * 2,
         config.hidden_dim * 2,
         config.hidden_dim * 4,
+        config.hidden_dim * 2,
         config.input_dim
     ]
 
