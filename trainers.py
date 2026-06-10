@@ -23,7 +23,7 @@ def run_training(start_symbols, max_symbols, model, optimizer, criterion,
     scaler = torch.amp.GradScaler('cuda') if device.type == 'cuda' else None
 
     total_symbols_processed = start_symbols
-    LOG_INTERVAL = 1_000_000_000
+    LOG_INTERVAL = 100_000_000
     UPDATE_INTERVAL = 1_000_000
 
     interval_train_loss_sum = 0.0

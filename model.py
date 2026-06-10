@@ -11,7 +11,7 @@ class Autoencoder(nn.Module):
         for i in range(len(layer_sizes) - 1):
             layers.append(nn.Linear(layer_sizes[i], layer_sizes[i+1]))
             if i < len(layer_sizes) - 2:
-                layers.append(nn.LayerNorm(layer_sizes[i+1]))
+                layers.append(nn.BatchNorm1d(layer_sizes[i+1]))
                 layers.append(nn.SiLU())
 
         self.net = nn.Sequential(*layers)

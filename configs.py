@@ -3,15 +3,14 @@ from dataclasses import dataclass
 @dataclass
 class PrimaryConfig:
     seq_len: int = 64
-    input_dim: int = 64 * 32
-    hidden_dim: int = 64 * 32
+    input_dim: int = 64 * 21
+    hidden_dim: int = 64 * 21
     bottleneck: int = 64 * 2
     learning_rate: float = 0.00005
     train_ratio: float = 0.99
     batch_size: int = 1024
     device: str = "cuda"
     model_name: str = "primary_base"
-    encoding: str = "utf8"
 
 @dataclass
 class SecondaryConfig:

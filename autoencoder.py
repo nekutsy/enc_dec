@@ -1,4 +1,3 @@
-# autoencoder.py
 import os
 import sys
 import torch
@@ -12,16 +11,16 @@ from logger import CSVLogger, get_last_symbols
 
 torch.set_float32_matmul_precision('high')
 
-def reconstruct_text(model, text: str, config: PrimaryConfig, device) -> str:
+def reconstruct_text(model, text: str, config, device) -> str:
     model.eval()
-    max_bits = config.seq_len * 32
-    chunks = split_into_chunks(text, max_bits, encoding=config.encoding)
+    max_bits = config.seq_len * 21
+    chunks = split_into_chunks(text, max_bits)
     reconstructed = []
     with torch.no_grad():
         for orig_chunk, bits in chunks:
             inp = torch.tensor([bits], dtype=torch.float32).to(device)
             out = model(inp).squeeze(0).cpu().tolist()
-            rec_str = vec2seq(out, encoding=config.encoding)
+            rec_str = vec2seq(out)
             reconstructed.append(rec_str)
     return ''.join(reconstructed)
 
@@ -33,21 +32,19 @@ def run_experiments():
 
     seq_lens = [2, 4, 8, 16, 32]
     target_symbols = 30 * 1000000
-    encoding = "utf8"
 
     for seq_len in seq_lens:
-        print(f"\n--- Experiment: seq_len={seq_len}, encoding={encoding} ---")
+        print(f"\n--- Experiment: seq_len={seq_len}, encoding=unicode21 ---")
         config = PrimaryConfig(
             seq_len=seq_len,
-            input_dim=seq_len * 32,
-            hidden_dim=seq_len * 32 * 2,
+            input_dim=seq_len * 21,
+            hidden_dim=seq_len * 21 * 2,
             bottleneck=seq_len * 1,
             learning_rate=0.001,
             train_ratio=0.99,
             batch_size=256,
             device=device_type,
-            model_name=f"exp_seq{seq_len}_{encoding}",
-            encoding=encoding
+            model_name=f"exp_seq{seq_len}_unicode21"
         )
 
         x_train, x_val = prepare_data(text, config)
@@ -57,17 +54,11 @@ def run_experiments():
 
         layer_sizes = [
             config.input_dim,
-            config.hidden_dim,
-            config.hidden_dim // 2,
-            config.hidden_dim // 4,
-            config.hidden_dim // 8,
-            config.hidden_dim // 16,
+            config.hidden_dim * 2,
+            config.hidden_dim * 2,
             config.bottleneck,
-            config.hidden_dim // 16,
-            config.hidden_dim // 8,
-            config.hidden_dim // 4,
-            config.hidden_dim // 2,
-            config.hidden_dim,
+            config.hidden_dim * 2,
+            config.hidden_dim * 2,
             config.input_dim
         ]
 
@@ -83,6 +74,8 @@ def run_experiments():
         csv_path = os.path.join("sessions", f"training_losses_{base_filename}.csv")
 
         logger = CSVLogger(csv_path)
+        total_symbols_per_epoch = len(x_train) * config.seq_len
+        max_symbols = target_symbols
         start_symbols = get_last_symbols(csv_path)
 
         if start_symbols > 0:
@@ -90,7 +83,7 @@ def run_experiments():
 
         run_training(
             start_symbols=start_symbols,
-            max_symbols=target_symbols,
+            max_symbols=max_symbols,
             model=model,
             optimizer=optimizer,
             criterion=criterion,
@@ -110,7 +103,7 @@ def main():
         config.device = "cpu"
     device = torch.device(config.device)
     print(f"Using device: {device}")
-    print(f"Encoding: {config.encoding}")
+    print(f"Encoding: unicode21")
 
     if "--experiment" in sys.argv:
         run_experiments()
@@ -122,11 +115,17 @@ def main():
     layer_sizes = [
         config.input_dim,
         config.hidden_dim * 4,
+        config.hidden_dim * 2,
         config.hidden_dim,
+        config.hidden_dim // 2,
         config.hidden_dim // 4,
+        config.hidden_dim // 8,
         config.bottleneck,
+        config.hidden_dim // 8,
         config.hidden_dim // 4,
+        config.hidden_dim // 2,
         config.hidden_dim,
+        config.hidden_dim * 2,
         config.hidden_dim * 4,
         config.input_dim
     ]

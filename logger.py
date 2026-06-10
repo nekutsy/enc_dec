@@ -1,4 +1,3 @@
-# logger.py
 import csv
 import os
 
@@ -18,6 +17,21 @@ def get_last_symbols(csv_path):
                 symbols = int(row['total_symbols'])
                 if symbols > last:
                     last = symbols
+            except (ValueError, KeyError):
+                pass
+    return last
+
+def get_last_epoch(csv_path):
+    if not os.path.isfile(csv_path):
+        return 0
+    with open(csv_path, 'r', newline='') as f:
+        reader = csv.DictReader(f)
+        last = 0
+        for row in reader:
+            try:
+                epoch = int(row.get('epoch', 0))
+                if epoch > last:
+                    last = epoch
             except (ValueError, KeyError):
                 pass
     return last
