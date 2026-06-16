@@ -1,3 +1,6 @@
+"""Secondary latent-prediction autoencoder — learns to predict the next latent
+vector from previous `n` latents produced by the primary model."""
+
 import os
 import torch
 import torch.optim as optim
@@ -6,12 +9,43 @@ from configs import SecondaryConfig
 from model import Autoencoder
 from data import load_latent_vectors
 from logger import CSVLogger, get_last_epoch
-from trainers import run_training
+from trainers import run_training, build_scheduler, _save_checkpoint, _load_optimizer
 
-def create_sequences(latents, n):
+torch.set_float32_matmul_precision('high')
+
+
+def _compile_model(model, device):
+    if device.type == "cuda":
+        return torch.compile(model, mode="reduce-overhead")
+    return model
+
+
+def create_sequences(latents: torch.Tensor, n: int):
+    """Sliding windows of `n` consecutive latent vectors.
+
+    Returns (inputs, targets) where targets are inputs with an extra zero column
+    appended — the autoencoder decodes this into the next-step prediction.
+    """
     windows = latents.unfold(0, n, 1).transpose(1, 2).reshape(-1, n * latents.shape[1])
     targets = torch.cat([windows, torch.zeros(windows.size(0), 1)], dim=1)
     return windows, targets
+
+
+def _secondary_layer_sizes(config: SecondaryConfig) -> list[int]:
+    """9-layer autoencoder for secondary model."""
+    h = config.hidden_dim
+    return [
+        config.input_dim,
+        h,
+        h // 2,
+        h // 4,
+        config.bottleneck,
+        h // 4,
+        h // 2,
+        h,
+        config.output_dim,
+    ]
+
 
 def main():
     config = SecondaryConfig()
@@ -19,6 +53,9 @@ def main():
         config.device = "cpu"
     device = torch.device(config.device)
     print(f"Using device: {device}")
+
+    if device.type == "cuda":
+        torch.backends.cudnn.benchmark = config.cudnn_benchmark
 
     latents = load_latent_vectors()
     print(f"Loaded latent vectors: {latents.shape}")
@@ -35,31 +72,15 @@ def main():
     X_train, X_val = X[indices[:split]], X[indices[split:]]
     y_train, y_val = y[indices[:split]], y[indices[split:]]
 
-    input_dim = config.input_dim
-    hidden = config.hidden_dim
-    bottleneck = config.bottleneck
-    output_dim = config.output_dim
-
-    layer_sizes = [
-        input_dim,
-        hidden,
-        hidden // 2,
-        hidden // 4,
-        bottleneck,
-        hidden // 4,
-        hidden // 2,
-        hidden,
-        output_dim
-    ]
+    layer_sizes = _secondary_layer_sizes(config)
 
     model = Autoencoder(layer_sizes, name=config.model_name).to(device)
-    if config.device == "cuda":
-        model = torch.compile(model)
+    model = _compile_model(model, device)
 
-    layer_sizes_str = "_".join(map(str, layer_sizes))
+    key = "_".join(map(str, layer_sizes))
     os.makedirs("sessions/secondary", exist_ok=True)
-    model_path = os.path.join("sessions/secondary", f"secondary_{layer_sizes_str}_{config.model_name}.pth")
-    csv_path = os.path.join("sessions/secondary", f"training_losses_secondary_{layer_sizes_str}_{config.model_name}.csv")
+    model_path = os.path.join("sessions/secondary", f"secondary_{key}_{config.model_name}.pth")
+    csv_path = os.path.join("sessions/secondary", f"training_losses_secondary_{key}_{config.model_name}.csv")
 
     optimizer = optim.Adam(model.parameters(), lr=config.learning_rate)
     criterion = nn.MSELoss()
@@ -67,7 +88,10 @@ def main():
 
     current_epoch = get_last_epoch(csv_path)
     if current_epoch > 0:
-        model.load_state_dict(torch.load(model_path, map_location=device))
+        model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
+        _load_optimizer(optimizer, model_path, device)
+
+    scheduler = build_scheduler(optimizer, config, total_steps=100)
 
     run_training(
         start_symbols=current_epoch,
@@ -82,8 +106,12 @@ def main():
         logger=logger,
         model_path=model_path,
         batch_size=config.batch_size,
-        symbols_per_sample=seq_len
+        symbols_per_sample=seq_len,
+        grad_clip=config.grad_clip,
+        num_workers=config.num_workers,
+        scheduler=scheduler,
     )
+
 
 if __name__ == "__main__":
     main()

@@ -3,3 +3,8 @@
 /data/models/*
 ___pycache___
 __pycache__
+*.pt
+*.pth
+*.opt
+*.csv
+archive
