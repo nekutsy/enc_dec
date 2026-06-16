@@ -141,7 +141,10 @@ class SweepRunner:
             print(f'  ⚠ {n_params:,} > 250M — skipping')
             return None, 'skip'
 
+        # Prefix must include model-level vary params to avoid path collision
         prefix = f'sweep_{vary_name}{vary_value}'
+        if vary_name in ('normalization', 'activation', 'dropout', 'batch_size'):
+            prefix = f'{vary_name}_{vary_value}_sweep'
         val, status = train_one(arch, cfg, prefix)
         _cuda_safe_cleanup()
 

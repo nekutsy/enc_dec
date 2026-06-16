@@ -87,25 +87,39 @@ def solve_n_for_b(b_val, target_params, input_dim, bottleneck, max_n=20):
     return n, h, _p(n)
 
 
-def adaptive_batch_size(n_params):
-    """Heuristic batch size based on estimated VRAM usage."""
-    est_gb = n_params * 4 * 8 / 1e9
-    if est_gb < 0.25:      return 32768
-    elif est_gb < 1.0:      return 8192
-    elif est_gb < 2.0:      return 4096
-    elif est_gb < 3.5:      return 2048
-    elif est_gb < 5.0:      return 1024
-    elif est_gb < 6.5:      return 512
-    else:                    return 256
+
+MODEL_LEVEL_VARY = {'normalization', 'activation', 'dropout'}
+OUTPUT_LEVEL_VARY = {'batch_size'}
 
 
 def resolve_architecture(vary_value, vary_name, sweep_config: SweepConfig):
     """Resolve full architecture given a candidate vary_value and SweepConfig.
 
+    Model-level params (normalization, activation) → set on cfg.model,
+    output-level params (batch_size) → set on cfg.output.batch_size,
+    then architecture is resolved from sweep.fixed.
+
     Returns dict: {sizes, b, n, hidden_dim, n_params}
     """
     mc = sweep_config.model
     sc = sweep_config.sweep
+
+    # Params that don't affect architecture shape
+    if vary_name in MODEL_LEVEL_VARY:
+        setattr(mc, vary_name, vary_value)
+    elif vary_name in OUTPUT_LEVEL_VARY:
+        sweep_config.output.batch_size = vary_value
+
+    if vary_name in MODEL_LEVEL_VARY | OUTPUT_LEVEL_VARY:
+        # Resolve architecture from fixed params (n or b)
+        fixed = dict(sc.fixed)
+        if 'n' in fixed:
+            vary_name, vary_value = 'n', fixed['n']
+        elif 'b' in fixed:
+            vary_name, vary_value = 'b', fixed['b']
+        else:
+            raise ValueError(
+                f'vary={vary_name} needs either n= or b= in fixed')
 
     seq_len = mc.seq_len
     input_dim = seq_len * UNICODE_BITS
@@ -234,7 +248,14 @@ def gather_done(sweep_log, target_symbols):
                 val_str = row.get('final_val_loss', '')
                 vary_str = row.get('vary_value', '')
                 if status == 'done' and sym >= target_symbols * 0.85 and val_str and vary_str:
-                    vary_val = float(vary_str) if '.' in vary_str else int(vary_str)
+                    try:
+                        vary_val = float(vary_str) if '.' in vary_str or vary_str.lstrip('-').isdigit() else vary_str
+                        if isinstance(vary_val, str):
+                            vary_val = vary_str
+                        else:
+                            vary_val = int(vary_val) if vary_val == int(vary_val) else vary_val
+                    except ValueError:
+                        vary_val = vary_str
                     done[vary_val] = float(val_str)
             except (ValueError, TypeError):
                 continue
@@ -272,7 +293,7 @@ def train_one(arch, sweep_config: SweepConfig, model_prefix):
     lr = tc.lr
     batch_size = oc.batch_size
 
-    bs = batch_size if batch_size is not None else adaptive_batch_size(n_params)
+    bs = batch_size if batch_size is not None else 256
     model_path, csv_path = save_paths(sizes, model_prefix, prefix=workspace)
 
     arch_str = '→'.join(str(s) for s in sizes)
