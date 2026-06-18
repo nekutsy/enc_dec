@@ -1,4 +1,4 @@
-"""Primary text autoencoder — interactive training and reconstruction."""
+"""Primary text autoencoder — model creation and reconstruction utilities."""
 
 import sys
 import torch
@@ -10,8 +10,6 @@ from data import load_text, prepare_data, split_into_chunks, vec2seq, export_lat
 from trainers import run_training, build_scheduler, _cuda_safe_cleanup
 from logger import CSVLogger
 from sweep_lib import save_paths, compile_model, train_setup
-
-torch.set_float32_matmul_precision('high')
 
 
 def _default_layer_sizes(config: PrimaryConfig) -> list[int]:
@@ -41,12 +39,13 @@ def reconstruct_text(model, text: str, config, device) -> str:
 
 
 def main():
+    """Non-interactive: train an autoencoder from command line."""
     config = PrimaryConfig()
     if config.device == 'cuda' and not torch.cuda.is_available():
         config.device = 'cpu'
     device = torch.device(config.device)
+    torch.set_float32_matmul_precision('high')
     print(f'Using device: {device}')
-    print(f'Encoding: unicode21')
 
     if device.type == 'cuda':
         torch.backends.cudnn.benchmark = config.cudnn_benchmark
@@ -59,9 +58,7 @@ def main():
     model = compile_model(model, device)
 
     model_path, csv_path = save_paths(layer_sizes, config.model_name)
-
-    print(f'Model path: {model_path}')
-    print(f'CSV path: {csv_path}')
+    print(f'Model: {model_path}')
 
     optimizer = optim.AdamW(model.parameters(), lr=config.learning_rate, fused=config.device == 'cuda')
     criterion = nn.MSELoss()
@@ -72,46 +69,24 @@ def main():
     total_epochs = 30
     total_symbols_per_epoch = len(train_ds) * config.seq_len
     target_symbols = total_epochs * total_symbols_per_epoch
+    step_sch, ckpt_sch = build_scheduler(optimizer, config, total_epochs)
 
-    scheduler = build_scheduler(optimizer, config, total_epochs)
-
-    print('Commands: <text to reconstruct>, "resume N", "export", "quit"')
-    while True:
-        user_input = input('> ')
-        if user_input.lower() in ('quit', 'exit'):
-            _cuda_safe_cleanup()
-            break
-        if user_input.lower().startswith('resume'):
-            parts = user_input.split()
-            if len(parts) == 2 and parts[1].isdigit():
-                extra_epochs = int(parts[1])
-                extra_symbols = extra_epochs * total_symbols_per_epoch
-                new_max = start_symbols + extra_symbols
-                print(f'Training for {extra_epochs} more epochs ({extra_symbols} symbols)...')
-                try:
-                    start_symbols = run_training(
-                        start_symbols, new_max, model, optimizer, criterion,
-                        train_ds, val_ds, logger, model_path,
-                        config.batch_size, config.seq_len,
-                        grad_clip=config.grad_clip,
-                        num_workers=config.num_workers,
-                        scheduler=scheduler,
-                    )
-                except KeyboardInterrupt:
-                    print('\nTraining interrupted. Checkpoint saved.')
-                print('Done.\n')
-            else:
-                print('Usage: resume <epochs>')
-            continue
-        if user_input.lower() == 'export':
-            export_latent_vectors(model, text, config, device,
-                                  output_path='data/latent/latent_vectors.pt')
-            continue
-        if not user_input:
-            print('Empty input.')
-            continue
-        reconstructed = reconstruct_text(model, user_input, config, device)
-        print('Reconstructed:', reconstructed, '\n')
+    print(f'Training {total_epochs} epochs ({target_symbols:,} symbols)...')
+    try:
+        run_training(
+            start_symbols, target_symbols, model, optimizer, criterion,
+            train_ds, val_ds, logger, model_path,
+            config.batch_size, config.seq_len,
+            grad_clip=config.grad_clip,
+            num_workers=config.num_workers,
+            step_scheduler=step_sch,
+            checkpoint_scheduler=ckpt_sch,
+        )
+    except KeyboardInterrupt:
+        print('\nTraining interrupted. Checkpoint saved.')
+    finally:
+        _cuda_safe_cleanup()
+    print('Done.')
 
 
 if __name__ == '__main__':

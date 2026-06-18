@@ -1,16 +1,17 @@
 {
-  "name": "ratio_20m",
+  "name": "pyramid_binary_n_160m_s128_bs256_4M",
   "model": {
-    "seq_len": 32,
+    "seq_len": 128,
     "bottleneck": null,
     "activation": "silu",
     "normalization": "batchnorm",
     "init": "orthogonal",
     "init_gain": 0.5,
-    "dropout": 0.0
+    "dropout": 0.0,
+    "shape": "pyramid"
   },
   "training": {
-    "target_samples": 120000000,
+    "target_samples": 4000000,
     "lr": 0.001,
     "grad_clip": 1.0,
     "scheduler": "cosine",
@@ -21,23 +22,17 @@
     "train_ratio": 0.99
   },
   "sweep": {
-    "strategy": "grid",
+    "strategy": "binary",
     "vary": "n",
-    "values": [
-      2,
-      3,
-      4,
-      5,
-      6
-    ],
+    "values": [2, 8],
     "solve": "b",
-    "budget": 20000000,
+    "budget": 160000000,
     "fixed": {}
   },
   "output": {
-    "workspace": "sessions/ratio20",
-    "sweep_log": "sessions/ratio20_sweep_summary.csv",
+    "workspace": "sessions/pyramid_n_search",
+    "sweep_log": "sessions/pyramid_n_search_160m_s128_4M_summary.csv",
     "device": "auto",
-    "batch_size": null
+    "batch_size": 256
   }
 }

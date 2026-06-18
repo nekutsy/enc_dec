@@ -44,15 +44,15 @@ def _validate(model, val_loader, criterion, device):
     return total_loss / total_samples if total_samples > 0 else 0.0
 
 
-def _log_checkpoint(csv_path, total_symbols, train_loss, val_loss):
+def _log_checkpoint(csv_path, total_samples, total_symbols, train_loss, val_loss):
     with open(csv_path, 'a', newline='') as f:
         writer = csv.writer(f)
-        writer.writerow([total_symbols, train_loss, val_loss])
+        writer.writerow([total_samples, total_symbols, train_loss, val_loss])
 
 
 def _progress_line(total_processed, max_total, loss, speed, eta):
     progress = (total_processed / max_total) * 100
-    return f"\r\033[KProgress: {progress:.1f}% | Loss: {loss:.6f} | Speed: {speed:.0f} sym/s | ETA: {eta:.0f}s"
+    return f"\r\033[KProgress: {progress:.1f}% | Loss: {loss:.6f} | Speed: {speed:.0f} samples/s | ETA: {eta:.0f}s"
 
 
 def _save_checkpoint(model, optimizer, model_path):
@@ -71,9 +71,14 @@ def _load_optimizer(optimizer, model_path, device):
 
 
 def build_scheduler(optimizer, config, total_steps: int):
-    """Return lr_scheduler or None based on config settings."""
+    """Return (per_step_scheduler, per_checkpoint_scheduler).
+    
+    per_step_scheduler: called every batch step (e.g. warmup, cosine).
+    per_checkpoint_scheduler: called at validation checkpoints with val_loss (plateau).
+    Returns (None, None) if no scheduler configured.
+    """
     if not config.lr_scheduler:
-        return None
+        return None, None
 
     total_steps = max(total_steps, 1)
     warmup_steps = int(config.lr_warmup_epochs * total_steps)
@@ -89,21 +94,26 @@ def build_scheduler(optimizer, config, total_steps: int):
             return torch.optim.lr_scheduler.SequentialLR(
                 optimizer, schedulers=[warmup, cosine],
                 milestones=[warmup_steps]
-            )
-        return cosine
+            ), None
+        return cosine, None
 
     if config.lr_scheduler == "plateau":
-        return torch.optim.lr_scheduler.ReduceLROnPlateau(
+        warmup = torch.optim.lr_scheduler.LinearLR(
+            optimizer, start_factor=0.1, total_iters=warmup_steps
+        ) if warmup_steps > 0 else None
+        plateau = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, mode='min', factor=0.5, patience=5
         )
+        return warmup, plateau
 
-    return None
+    return None, None
 
 
-def run_training(start_symbols, max_symbols, model, optimizer, criterion,
+def run_training(start_samples, max_samples, model, optimizer, criterion,
                  train_dataset, val_dataset, logger, model_path, batch_size,
-                 symbols_per_sample, grad_clip=1.0, num_workers=0,
-                 scheduler=None):
+                 seq_len, grad_clip=1.0, num_workers=0,
+                 step_scheduler=None, checkpoint_scheduler=None,
+                 early_stop_patience=3):
     os.makedirs(os.path.dirname(model_path), exist_ok=True)
     device = next(model.parameters()).device
 
@@ -131,39 +141,38 @@ def run_training(start_symbols, max_symbols, model, optimizer, criterion,
     scaler = torch.amp.GradScaler('cuda') if device.type == 'cuda' else None
     use_amp = scaler is not None
 
-    total_symbols_processed = start_symbols
-    LOG_INTERVAL = 20_000_000
-    UPDATE_INTERVAL = 1_000_000
+    total_samples_processed = start_samples
+    LOG_INTERVAL = 500_000   # samples between validation checkpoints
+    UPDATE_INTERVAL = 25_000  # samples between progress updates
 
     best_val_loss = float('inf')
     stale_checkpoints = 0
     best_model_path = model_path.replace('.pth', '_best.pth')
-    EARLY_STOP_PATIENCE = 3
     _early_stopped = False
 
     interval_train_loss_sum = 0.0
-    interval_train_samples = 0
+    interval_train_count = 0
 
-    next_update = total_symbols_processed + UPDATE_INTERVAL
-    next_log = total_symbols_processed + LOG_INTERVAL
+    next_update = total_samples_processed + UPDATE_INTERVAL
+    next_log = total_samples_processed + LOG_INTERVAL
     last_update_time = time.time()
-    last_update_symbols = total_symbols_processed
+    last_update_samples = total_samples_processed
 
     if not os.path.isfile(logger.csv_path):
         with open(logger.csv_path, 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(['total_symbols', 'train_loss', 'val_loss'])
+            writer.writerow(['total_samples', 'total_symbols', 'train_loss', 'val_loss'])
 
     sys.stdout.write("\r\033[K")
     sys.stdout.flush()
 
     try:
-        while total_symbols_processed < max_symbols and not _early_stopped:
+        while total_samples_processed < max_samples and not _early_stopped:
             if _interrupted:
                 raise KeyboardInterrupt
             model.train()
             for x_batch, y_batch in train_loader:
-                if _interrupted or total_symbols_processed >= max_symbols:
+                if _interrupted or total_samples_processed >= max_samples:
                     break
 
                 # ── safe interruption point (no CUDA ops in flight between batches) ──
@@ -191,39 +200,38 @@ def run_training(start_symbols, max_symbols, model, optimizer, criterion,
                         torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
                     optimizer.step()
 
-                if scheduler is not None and not isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                    scheduler.step()
+                if step_scheduler is not None:
+                    step_scheduler.step()
 
                 batch_size_actual = x_batch.size(0)
-                batch_symbols = batch_size_actual * symbols_per_sample
 
                 interval_train_loss_sum += loss.item() * batch_size_actual
-                interval_train_samples += batch_size_actual
-                total_symbols_processed += batch_symbols
+                interval_train_count += batch_size_actual
+                total_samples_processed += batch_size_actual
 
-                if total_symbols_processed >= next_update:
+                if total_samples_processed >= next_update:
                     current_time = time.time()
                     time_delta = current_time - last_update_time
-                    symbols_delta = total_symbols_processed - last_update_symbols
-                    speed = symbols_delta / time_delta if time_delta > 0 else 0
-                    remaining = max_symbols - total_symbols_processed
+                    samples_delta = total_samples_processed - last_update_samples
+                    speed = samples_delta / time_delta if time_delta > 0 else 0
+                    remaining = max_samples - total_samples_processed
                     eta = remaining / speed if speed > 0 else 0
-                    avg_loss = interval_train_loss_sum / interval_train_samples if interval_train_samples > 0 else 0
+                    avg_loss = interval_train_loss_sum / interval_train_count if interval_train_count > 0 else 0
 
-                    sys.stdout.write(_progress_line(total_symbols_processed, max_symbols, avg_loss, speed, eta))
+                    sys.stdout.write(_progress_line(total_samples_processed, max_samples, avg_loss, speed, eta))
                     sys.stdout.flush()
 
                     next_update += UPDATE_INTERVAL
                     last_update_time = current_time
-                    last_update_symbols = total_symbols_processed
+                    last_update_samples = total_samples_processed
 
-                if total_symbols_processed >= next_log:
-                    avg_train_loss = interval_train_loss_sum / interval_train_samples if interval_train_samples > 0 else 0
+                if total_samples_processed >= next_log:
+                    avg_train_loss = interval_train_loss_sum / interval_train_count if interval_train_count > 0 else 0
                     avg_val_loss = _validate(model, val_loader, criterion, device)
                     model.train()
 
-                    if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                        scheduler.step(avg_val_loss)
+                    if checkpoint_scheduler is not None:
+                        checkpoint_scheduler.step(avg_val_loss)
 
                     # Early stopping
                     if avg_val_loss < best_val_loss:
@@ -233,25 +241,36 @@ def run_training(start_symbols, max_symbols, model, optimizer, criterion,
                     else:
                         stale_checkpoints += 1
 
-                    _log_checkpoint(logger.csv_path, total_symbols_processed, avg_train_loss, avg_val_loss)
+                    total_symbols_val = total_samples_processed * seq_len
+                    _log_checkpoint(logger.csv_path, total_samples_processed, total_symbols_val, avg_train_loss, avg_val_loss)
 
-                    sys.stdout.write(f"\r\033[K[{total_symbols_processed} symbols] Train Loss: {avg_train_loss:.6f} | Val Loss: {avg_val_loss:.6f}\n")
+                    # Write to global training log
+                    from pathlib import Path
+                    global_log = os.path.join(os.path.dirname(logger.csv_path), '..', 'training.log')
+                    global_log = os.path.abspath(global_log)
+                    os.makedirs(os.path.dirname(global_log), exist_ok=True)
+                    timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
+                    model_tag = os.path.basename(model_path).replace('.pth', '').replace('_best', '')
+                    with open(global_log, 'a') as gl:
+                        gl.write(f'{timestamp} | {model_tag} | samples={total_samples_processed:,} | train={avg_train_loss:.6f} | val={avg_val_loss:.6f}\n')
+
+                    sys.stdout.write(f"\r\033[K[{total_samples_processed} samples / {total_symbols_val} sym] Train Loss: {avg_train_loss:.6f} | Val Loss: {avg_val_loss:.6f}\n")
                     sys.stdout.flush()
 
-                    if stale_checkpoints >= EARLY_STOP_PATIENCE:
-                        print(f"  Early stop: val loss not improved for {EARLY_STOP_PATIENCE} checkpoints (best={best_val_loss:.6f})")
+                    if stale_checkpoints >= early_stop_patience:
+                        print(f"  Early stop: val loss not improved for {early_stop_patience} checkpoints (best={best_val_loss:.6f})")
                         _early_stopped = True
                         break
 
                     interval_train_loss_sum = 0.0
-                    interval_train_samples = 0
+                    interval_train_count = 0
                     next_log += LOG_INTERVAL
 
                     last_update_time = time.time()
-                    last_update_symbols = total_symbols_processed
-                    next_update = total_symbols_processed + UPDATE_INTERVAL
+                    last_update_samples = total_samples_processed
+                    next_update = total_samples_processed + UPDATE_INTERVAL
 
-            if total_symbols_processed >= max_symbols:
+            if total_samples_processed >= max_samples:
                 break
 
             if _interrupted:
@@ -270,13 +289,14 @@ def run_training(start_symbols, max_symbols, model, optimizer, criterion,
     # Normal exit — sync before final save (at safe point)
     _cuda_safe_cleanup()
 
-    if interval_train_samples > 0:
-        avg_train_loss = interval_train_loss_sum / interval_train_samples
+    if interval_train_count > 0:
+        avg_train_loss = interval_train_loss_sum / interval_train_count
         avg_val_loss = _validate(model, val_loader, criterion, device)
-        _log_checkpoint(logger.csv_path, total_symbols_processed, avg_train_loss, avg_val_loss)
-        sys.stdout.write(f"\r\033[K[{total_symbols_processed} symbols] Train Loss: {avg_train_loss:.6f} | Val Loss: {avg_val_loss:.6f}\n")
+        total_symbols_val = total_samples_processed * seq_len
+        _log_checkpoint(logger.csv_path, total_samples_processed, total_symbols_val, avg_train_loss, avg_val_loss)
+        sys.stdout.write(f"\r\033[K[{total_samples_processed} samples / {total_symbols_val} sym] Train Loss: {avg_train_loss:.6f} | Val Loss: {avg_val_loss:.6f}\n")
         sys.stdout.flush()
 
     _save_checkpoint(model, optimizer, model_path)
     print(f"Training finished. Model saved to {model_path}")
-    return total_symbols_processed
+    return total_samples_processed

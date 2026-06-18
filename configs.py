@@ -22,6 +22,7 @@ class PrimaryConfig:
     num_workers: int = 0
     lr_scheduler: str = ""  # "cosine" | "plateau" | ""
     lr_warmup_epochs: float = 0.0  # warmup before max LR
+    early_stop_patience: int = 3
     cudnn_benchmark: bool = True
 
 

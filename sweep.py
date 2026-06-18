@@ -113,10 +113,10 @@ class SweepRunner:
 
         oc = cfg.output
         init_log(oc.sweep_log)
-        existing = gather_done(oc.sweep_log, cfg.training.target_symbols)
+        existing = gather_done(oc.sweep_log, cfg.training.target_samples, cfg.model.seq_len)
 
         print(f'Sweep: {cfg.name}  ({cfg.sweep.strategy} over {cfg.sweep.vary})')
-        print(f'  seq_len={cfg.model.seq_len}  target={cfg.training.target_symbols//1e6:.0f}M sym  '
+        print(f'  seq_len={cfg.model.seq_len}  target={cfg.training.target_samples//1e6:.0f}M samples  '
               f'budget={cfg.sweep.budget//1e6 if cfg.sweep.budget else "auto"}M')
         print(f'  workspace: {oc.workspace}  |  log: {oc.sweep_log}')
         print()
@@ -145,7 +145,7 @@ class SweepRunner:
         prefix = f'sweep_{vary_name}{vary_value}'
         if vary_name in ('normalization', 'activation', 'dropout', 'batch_size'):
             prefix = f'{vary_name}_{vary_value}_sweep'
-        val, status = train_one(arch, cfg, prefix)
+        val, status, actual_samples = train_one(arch, cfg, prefix)
         _cuda_safe_cleanup()
 
         mc = cfg.model
@@ -163,7 +163,8 @@ class SweepRunner:
             'bottleneck': bottleneck,
             'params': n_params,
             'batch_size': cfg.output.batch_size,
-            'total_symbols': cfg.training.target_symbols,
+            'total_samples': actual_samples,
+            'total_symbols': actual_samples * seq_len,
             'final_val_loss': val if val is not None else '',
             'status': status,
             'duration_seconds': '',
@@ -201,11 +202,32 @@ class SweepRunner:
             print()
 
     def _run_binary(self, existing):
-        """Binary search over vary in [lo, hi]."""
+        """Binary search over vary in [lo, hi].
+        
+        For float vary (like lr), step is auto-detected:
+        if both values are floats, step = 10^k where k is min decimal places.
+        """
         cfg = self.cfg
         lo, hi = cfg.sweep.values[0], cfg.sweep.values[1]
         vary_name = cfg.sweep.vary
         results = dict(existing)
+        
+        # Auto-detect step for convergence
+        is_float = isinstance(lo, float) or isinstance(hi, float)
+        if is_float:
+            # Find granularity: e.g. 0.001 → step 0.001, 0.01 → 0.01
+            def _decimals(v):
+                s = f"{v:.10f}".rstrip('0')
+                if '.' in s:
+                    return len(s.split('.')[1])
+                return 0
+            step = 10 ** (-max(_decimals(lo), _decimals(hi)))
+            def _to_step(v):
+                return round(v / step) * step
+        else:
+            step = 1
+            def _to_step(v):
+                return int(v)
 
         # Probe boundaries
         for boundary in [lo, hi]:
@@ -225,29 +247,46 @@ class SweepRunner:
                 break
 
             sorted_ns = sorted(valid, key=valid.get)
-            best, second = sorted_ns[0], sorted_ns[1]
+            best = sorted_ns[0]
 
-            print(f'  best: {vary_name}={best} ({results[best]:.6f})  '
-                  f'2nd: {vary_name}={second} ({results[second]:.6f})')
+            # Check neighbors of best — converge when both sides tested
+            left_neighbor = _to_step(best - step)
+            right_neighbor = _to_step(best + step)
+            has_left = best <= lo or left_neighbor in results
+            has_right = best >= hi or right_neighbor in results
 
-            if abs(best - second) <= 1:
-                print('  → converged (adjacent)\n')
+            print(f'  best: {vary_name}={best} ({results[best]:.6f})')
+
+            if has_left and has_right:
+                print(f'  → converged (best surrounded by tested neighbors)\n')
                 break
 
-            mid = int((best + second) // 2)
-            if mid in results:
-                lo2, hi2 = min(best, second), max(best, second)
-                found = False
-                for candidate in range(lo2 + 1, hi2):
-                    if candidate not in results:
-                        mid = candidate
-                        found = True
+            # Determine what to test next
+            # Priority: test missing neighbor of best
+            if not has_left and left_neighbor not in results:
+                mid = left_neighbor
+            elif not has_right and right_neighbor not in results:
+                mid = right_neighbor
+            else:
+                second = sorted_ns[1]
+                print(f'  2nd: {vary_name}={second} ({results[second]:.6f})')
+                mid = _to_step((best + second) / 2)
+                if mid in results:
+                    lo2, hi2 = min(best, second), max(best, second)
+                    found = False
+                    candidate = lo2 + step
+                    while candidate < hi2:
+                        c = _to_step(candidate)
+                        if c not in results:
+                            mid = c
+                            found = True
+                            break
+                        candidate += step
+                    if not found:
+                        print(f'  → all values tested — converged\n')
                         break
-                if not found:
-                    print(f'  → all values between {lo2} and {hi2} tested — converged\n')
-                    break
 
-            print(f'  → testing {vary_name}={mid} between {best} and {second}\n')
+            print(f'  → testing {vary_name}={mid}\n')
             val, status = self._train_and_log(mid)
             if val is not None:
                 results[mid] = val
@@ -359,7 +398,7 @@ def build_parser():
     gp.add_argument('--bottleneck', type=int, default=None)
     gp.add_argument('--lr', type=float, default=0.001)
     gp.add_argument('--scheduler', default='cosine')
-    gp.add_argument('--target-symbols', type=str, default='120M')
+    gp.add_argument('--target-samples', type=str, default='5M')
     gp.add_argument('--workspace', default='sessions/sweep')
     gp.add_argument('--sweep-log', default='sessions/sweep_summary.csv')
     gp.add_argument('--device', default='auto')
@@ -379,7 +418,7 @@ def build_parser():
     bp.add_argument('--bottleneck', type=int, default=None)
     bp.add_argument('--lr', type=float, default=0.001)
     bp.add_argument('--scheduler', default='cosine')
-    bp.add_argument('--target-symbols', type=str, default='120M')
+    bp.add_argument('--target-samples', type=str, default='5M')
     bp.add_argument('--workspace', default='sessions/sweep')
     bp.add_argument('--sweep-log', default='sessions/sweep_summary.csv')
     bp.add_argument('--device', default='auto')
@@ -393,7 +432,7 @@ def _cli_shorthand_to_config(args, vary_values) -> SweepConfig:
     from sweep_config import ModelConfig, TrainingConfig, SweepSpec, OutputConfig
 
     budget = _parse_size(args.budget) if args.budget else None
-    target_symbols = _parse_size(args.target_symbols)
+    target_samples = _parse_size(args.target_samples)
 
     return SweepConfig(
         name=f'{args.command}_{getattr(args, "vary", "sweep")}'.replace('=', '_'),
@@ -402,7 +441,7 @@ def _cli_shorthand_to_config(args, vary_values) -> SweepConfig:
             bottleneck=getattr(args, 'bottleneck', None),
         ),
         training=TrainingConfig(
-            target_symbols=target_symbols,
+            target_samples=target_samples,
             lr=getattr(args, 'lr', 0.001),
             scheduler=getattr(args, 'scheduler', 'cosine'),
         ),

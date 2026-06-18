@@ -21,6 +21,7 @@ class ModelConfig:
     bottleneck: int | None = None  # None → seq_len
     activation: str = 'silu'       # silu | relu | gelu | leaky_relu
     normalization: str = 'batchnorm'  # batchnorm | layernorm | none
+    shape: str = 'rectangular'     # rectangular | pyramid
     init: str = 'orthogonal'       # orthogonal | xavier | kaiming
     init_gain: float = 0.5
     dropout: float = 0.0           # 0.0 → no dropout applied
@@ -31,7 +32,7 @@ class ModelConfig:
 @dataclass
 class TrainingConfig:
     """Training loop settings."""
-    target_symbols: int = 120_000_000
+    target_samples: int = 5_000_000
     lr: float = 0.001
     grad_clip: float = 1.0
     scheduler: str = 'cosine'      # cosine | plateau | none
@@ -101,6 +102,10 @@ class SweepConfig:
         training_data = data.get('training', {})
         sweep_data = data.get('sweep', {})
         output_data = data.get('output', {})
+
+        # backward compat: old configs use target_symbols
+        if 'target_symbols' in training_data and 'target_samples' not in training_data:
+            training_data['target_samples'] = training_data.pop('target_symbols')
 
         return cls(
             name=data.get('name', 'sweep'),

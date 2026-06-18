@@ -91,7 +91,7 @@ def main():
         model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
         _load_optimizer(optimizer, model_path, device)
 
-    scheduler = build_scheduler(optimizer, config, total_steps=100)
+    step_sch, ckpt_sch = build_scheduler(optimizer, config, total_steps=100)
 
     run_training(
         start_symbols=current_epoch,
@@ -109,7 +109,8 @@ def main():
         symbols_per_sample=seq_len,
         grad_clip=config.grad_clip,
         num_workers=config.num_workers,
-        scheduler=scheduler,
+        step_scheduler=step_sch,
+        checkpoint_scheduler=ckpt_sch,
     )
 
 

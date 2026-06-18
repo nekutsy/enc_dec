@@ -17,7 +17,7 @@ from configs import PrimaryConfig, UNICODE_BITS
 from model import Autoencoder
 from data import load_text, prepare_data
 from trainers import run_training, build_scheduler, _cuda_safe_cleanup
-from logger import CSVLogger, get_last_symbols
+from logger import CSVLogger, get_last_samples
 from sweep_config import SweepConfig
 
 
@@ -41,6 +41,52 @@ def make_rectangular(input_dim, hidden_dim, bottleneck, n_hidden):
         + [hidden_dim] * n_hidden
         + [input_dim]
     )
+
+
+def solve_d_for_n(n, target_params, D, B, max_d=None):
+    """Binary search d ∈ [0.1, max_d] such that count_params(make_pyramid(D,B,n,d)) ≈ target_params.
+    
+    Uses actual size list + count_params for exact match (no formula error).
+    Returns (d, h_start, actual_params).
+    """
+    if max_d is None:
+        max_d = D * 10
+
+    def _p(d_val):
+        return count_params(make_pyramid(D, B, n, d_val))
+
+    lo, hi = 0.1, max_d
+    for _ in range(50):
+        mid = (lo + hi) / 2
+        if _p(mid) < target_params:
+            lo = mid
+        else:
+            hi = mid
+
+    p_lo, p_hi = _p(lo), _p(hi)
+    d = lo if abs(p_lo - target_params) <= abs(p_hi - target_params) else hi
+    d = round(d, 6)
+    h_start = B + d
+    return d, h_start, _p(d)
+
+
+def make_pyramid(input_dim, bottleneck, n_hidden, d):
+    """Build pyramid sizes: D→h1→h2→…→hn→B→hn→…→h2→h1→D
+    
+    h_i = B + d·(n−i+1)/n, so h_{n+1} would be B.
+    """
+    B, n = bottleneck, n_hidden
+    # Encoder side: D, h1, h2, ..., hn, B
+    enc = [input_dim]
+    for i in range(1, n + 1):
+        enc.append(int(B + d * (n - i + 1) / n))
+    enc.append(B)
+    # Decoder side (mirror, skipping D at end): hn, ..., h1, D
+    dec = []
+    for i in range(n - 1, -1, -1):  # n-1, ..., 0
+        dec.append(int(B + d * (i + 1) / n))
+    dec.append(input_dim)
+    return enc + dec
 
 
 def solve_b_for_n(n_hidden, target_params, input_dim, bottleneck):
@@ -89,6 +135,7 @@ def solve_n_for_b(b_val, target_params, input_dim, bottleneck, max_n=20):
 
 
 MODEL_LEVEL_VARY = {'normalization', 'activation', 'dropout'}
+TRAINING_LEVEL_VARY = {'lr', 'scheduler', 'grad_clip', 'optimizer', 'weight_decay'}
 OUTPUT_LEVEL_VARY = {'batch_size'}
 
 
@@ -99,6 +146,7 @@ def resolve_architecture(vary_value, vary_name, sweep_config: SweepConfig):
     output-level params (batch_size) → set on cfg.output.batch_size,
     then architecture is resolved from sweep.fixed.
 
+    Supports shape='rectangular' (default) and shape='pyramid'.
     Returns dict: {sizes, b, n, hidden_dim, n_params}
     """
     mc = sweep_config.model
@@ -107,10 +155,12 @@ def resolve_architecture(vary_value, vary_name, sweep_config: SweepConfig):
     # Params that don't affect architecture shape
     if vary_name in MODEL_LEVEL_VARY:
         setattr(mc, vary_name, vary_value)
+    elif vary_name in TRAINING_LEVEL_VARY:
+        setattr(sweep_config.training, vary_name, vary_value)
     elif vary_name in OUTPUT_LEVEL_VARY:
         sweep_config.output.batch_size = vary_value
 
-    if vary_name in MODEL_LEVEL_VARY | OUTPUT_LEVEL_VARY:
+    if vary_name in MODEL_LEVEL_VARY | TRAINING_LEVEL_VARY | OUTPUT_LEVEL_VARY:
         # Resolve architecture from fixed params (n or b)
         fixed = dict(sc.fixed)
         if 'n' in fixed:
@@ -124,6 +174,7 @@ def resolve_architecture(vary_value, vary_name, sweep_config: SweepConfig):
     seq_len = mc.seq_len
     input_dim = seq_len * UNICODE_BITS
     bottleneck = mc.bottleneck if mc.bottleneck is not None else seq_len
+    shape = getattr(mc, 'shape', 'rectangular')
 
     # Build fixed dict — sweep fixed params + model-derived constants
     fixed = dict(sc.fixed)
@@ -133,6 +184,37 @@ def resolve_architecture(vary_value, vary_name, sweep_config: SweepConfig):
     b_val = fixed.get('b', None)
     budget = sc.budget
 
+    if shape == 'pyramid':
+        if sc.solve == 'b':
+            assert n is not None, "need fixed n when solve=b"
+            d, h_start, n_params = solve_d_for_n(n, budget, input_dim, bottleneck)
+            sizes = make_pyramid(input_dim, bottleneck, n, d)
+            return {
+                'sizes': sizes,
+                'b': round(h_start / input_dim, 6),
+                'n': n,
+                'hidden_dim': h_start,
+                'n_params': n_params,
+            }
+        elif sc.solve == 'n':
+            raise NotImplementedError("solve=n not supported for pyramid shape")
+        elif n is not None and b_val is not None:
+            # b_val interpreted as h_start/input_dim ratio
+            h_start = int(input_dim * b_val)
+            d = h_start - bottleneck
+            sizes = make_pyramid(input_dim, bottleneck, n, d)
+            n_params = count_params(sizes)
+            return {
+                'sizes': sizes,
+                'b': b_val,
+                'n': n,
+                'hidden_dim': h_start,
+                'n_params': n_params,
+            }
+        else:
+            raise ValueError("Pyramid shape needs solve=b with n, or n+b fixed")
+
+    # --- rectangular (original logic) ---
     if sc.solve == 'b':
         assert n is not None, "need fixed n when solve=b"
         b_val, hidden_dim, n_params = solve_b_for_n(n, budget, input_dim, bottleneck)
@@ -195,10 +277,13 @@ def compile_model(model, device):
 # ── Checkpoint resume ────────────────────────────────────────
 
 def train_setup(config, model, optimizer, csv_path, model_path, device):
-    """Load checkpoint if available, return start_symbols."""
-    start_symbols = get_last_symbols(csv_path)
-    if start_symbols > 0:
-        print(f'  Resuming from {start_symbols} symbols. Loading checkpoint...')
+    """Load checkpoint if available, return (start_samples, start_symbols).
+    
+    Falls back to old single-column CSV (total_symbols only) if new format not found.
+    """
+    start_samples = get_last_samples(csv_path)
+    if start_samples > 0:
+        print(f'  Resuming from {start_samples:,} samples. Loading checkpoint...')
         state = torch.load(model_path, map_location=device, weights_only=True)
         has_prefix = any(k.startswith('_orig_mod.') for k in state.keys())
         unwrapped = model._orig_mod if hasattr(model, '_orig_mod') else model
@@ -206,7 +291,7 @@ def train_setup(config, model, optimizer, csv_path, model_path, device):
             state = {k[len('_orig_mod.'):]: v for k, v in state.items()}
         unwrapped.load_state_dict(state)
         _load_optimizer(optimizer, model_path, device)
-    return start_symbols
+    return start_samples
 
 
 def _load_optimizer(optimizer, model_path, device):
@@ -220,7 +305,7 @@ def _load_optimizer(optimizer, model_path, device):
 UNIFIED_COLUMNS = [
     'sweep_type', 'vary_param', 'vary_value',
     'seq_len', 'n_hidden', 'b', 'hidden_dim', 'bottleneck',
-    'params', 'batch_size', 'total_symbols',
+    'params', 'batch_size', 'total_samples', 'total_symbols',
     'final_train_loss', 'final_val_loss', 'status', 'duration_seconds',
 ]
 
@@ -234,20 +319,34 @@ def init_log(sweep_log, columns=None):
             csv.writer(f).writerow(cols)
 
 
-def gather_done(sweep_log, target_symbols):
-    """Read completed models from unified CSV. Returns {vary_value: val_loss}."""
+def gather_done(sweep_log, target_samples, seq_len=None):
+    """Read completed models from unified CSV. Returns {vary_value: val_loss}.
+    
+    Uses total_samples if available (new format); falls back to total_symbols/seq_len
+    for old CSVs.
+    """
     done = {}
     if not os.path.isfile(sweep_log):
         return done
     with open(sweep_log) as f:
         reader = csv.DictReader(f)
+        fieldnames = reader.fieldnames or []
+        has_samples = 'total_samples' in fieldnames
         for row in reader:
             try:
                 status = row.get('status', '')
-                sym = int(float(row.get('total_symbols', 0)))
                 val_str = row.get('final_val_loss', '')
                 vary_str = row.get('vary_value', '')
-                if status == 'done' and sym >= target_symbols * 0.85 and val_str and vary_str:
+
+                # Determine samples completed
+                if has_samples:
+                    sam = int(float(row.get('total_samples', 0)))
+                else:
+                    sym = int(float(row.get('total_symbols', 0)))
+                    sl = seq_len or int(float(row.get('seq_len', 32)))
+                    sam = sym // sl if sl > 0 else 0
+
+                if status == 'done' and sam >= target_samples * 0.85 and val_str and vary_str:
                     try:
                         vary_val = float(vary_str) if '.' in vary_str or vary_str.lstrip('-').isdigit() else vary_str
                         if isinstance(vary_val, str):
@@ -274,7 +373,7 @@ def log_row(sweep_log, row_dict):
 def train_one(arch, sweep_config: SweepConfig, model_prefix):
     """Train a single model given resolved architecture dict + SweepConfig.
 
-    Returns (val_loss, status).
+    Returns (val_loss, status, actual_samples).
     """
     mc = sweep_config.model
     tc = sweep_config.training
@@ -289,7 +388,7 @@ def train_one(arch, sweep_config: SweepConfig, model_prefix):
     device = sweep_config._device
     text = sweep_config._text
     workspace = oc.workspace
-    target_symbols = tc.target_symbols
+    target_samples = tc.target_samples
     lr = tc.lr
     batch_size = oc.batch_size
 
@@ -302,14 +401,13 @@ def train_one(arch, sweep_config: SweepConfig, model_prefix):
 
     # Resume check
     if os.path.isfile(csv_path):
-        with open(csv_path) as f:
-            rows = list(csv.reader(f))
-        if rows:
-            last_sym = int(float(rows[-1][0]))
-            if last_sym >= target_symbols:
-                val = float(rows[-1][2])
-                print(f'  already done ({last_sym:,} sym, val={val:.6f})')
-                return val, 'done'
+        last_samples = get_last_samples(csv_path)
+        if last_samples >= target_samples:
+            with open(csv_path) as f:
+                rows = list(csv.reader(f))
+                val = float(rows[-1][3]) if len(rows[-1]) > 3 else float(rows[-1][2])
+            print(f'  already done ({last_samples:,} samples, val={val:.6f})')
+            return val, 'done', last_samples
 
     config = PrimaryConfig(
         seq_len=seq_len, input_dim=input_dim, hidden_dim=hidden_dim,
@@ -317,7 +415,9 @@ def train_one(arch, sweep_config: SweepConfig, model_prefix):
         batch_size=bs, device=device.type, model_name=model_prefix,
         grad_clip=tc.grad_clip, num_workers=2 if device.type == 'cuda' else 0,
         lr_scheduler=tc.scheduler if tc.scheduler != 'none' else '',
-        lr_warmup_epochs=tc.warmup_fraction, cudnn_benchmark=False,
+        lr_warmup_epochs=tc.warmup_fraction,
+        early_stop_patience=tc.early_stop_patience,
+        cudnn_benchmark=False,
     )
 
     train_ds, val_ds = prepare_data(text, config)
@@ -343,7 +443,7 @@ def train_one(arch, sweep_config: SweepConfig, model_prefix):
         print(f'  ⚠ OOM during compile')
         _cuda_safe_cleanup()
         del model
-        return None, 'oom'
+        return None, 'oom', 0
 
     # Optimizer selection
     if tc.optimizer == 'adamw_fused' and device.type == 'cuda':
@@ -359,45 +459,45 @@ def train_one(arch, sweep_config: SweepConfig, model_prefix):
         optimizer = optim.AdamW(model.parameters(), lr=lr,
                                 weight_decay=tc.weight_decay)
 
-    total_batches = int(target_symbols / bs / seq_len) + 1
-    scheduler = build_scheduler(optimizer, config, total_batches)
+    total_batches = int(target_samples / bs) + 1
+    step_scheduler, checkpoint_scheduler = build_scheduler(optimizer, config, total_batches)
     criterion = nn.MSELoss()
     logger = CSVLogger(csv_path)
 
-    start_sym = train_setup(config, model, optimizer, csv_path, model_path, device)
-    rem = max(0, target_symbols - start_sym)
+    start_samples = train_setup(config, model, optimizer, csv_path, model_path, device)
+    rem = max(0, target_samples - start_samples)
     if rem <= 0:
-        with open(csv_path) as f:
-            rows = list(csv.reader(f))
-        val = float(rows[-1][2]) if rows and len(rows[-1]) > 2 else 0
-        return val, 'done'
+        return val, 'done', start_samples
 
-    print(f'  training {rem:,} symbols...')
+    print(f'  training {rem:,} samples...')
     t_start = time_mod.time()
 
     try:
-        final_symbols = run_training(
-            start_sym, target_symbols, model, optimizer, criterion,
+        final_samples = run_training(
+            start_samples, target_samples, model, optimizer, criterion,
             train_ds, val_ds, logger, model_path, bs,
-            seq_len, tc.grad_clip, 2, scheduler)
+            seq_len, tc.grad_clip, 2,
+            step_scheduler=step_scheduler,
+            checkpoint_scheduler=checkpoint_scheduler,
+            early_stop_patience=config.early_stop_patience)
 
         with open(csv_path) as f:
             rows = list(csv.reader(f))
-        val = float(rows[-1][2]) if rows and len(rows[-1]) > 2 else 0
+        val = float(rows[-1][3]) if len(rows[-1]) > 3 else float(rows[-1][2]) if rows and len(rows[-1]) > 2 else 0
         dur = time_mod.time() - t_start
-        print(f'  done: {final_symbols:,} sym in {dur:.0f}s  val={val:.6f}')
-        return val, 'done'
+        print(f'  done: {final_samples:,} samples in {dur:.0f}s  val={val:.6f}')
+        return val, 'done', final_samples
     except torch.cuda.OutOfMemoryError:
         print(f'  ⚠ OOM')
         _cuda_safe_cleanup()
         del model, optimizer
-        return None, 'oom'
+        return None, 'oom', 0
     except RuntimeError as e:
         if 'out of memory' in str(e).lower():
             print(f'  ⚠ OOM')
             _cuda_safe_cleanup()
             del model, optimizer
-            return None, 'oom'
+            return None, 'oom', 0
         raise
     except KeyboardInterrupt:
         _cuda_safe_cleanup()

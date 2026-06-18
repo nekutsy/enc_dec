@@ -1,13 +1,14 @@
 {
-  "name": "norm_comp_layernorm",
+  "name": "pyramid_lr_160m_s128_n2",
   "model": {
-    "seq_len": 32,
-    "bottleneck": 32,
+    "seq_len": 128,
+    "bottleneck": null,
     "activation": "silu",
-    "normalization": "layernorm",
+    "normalization": "batchnorm",
     "init": "orthogonal",
     "init_gain": 0.5,
-    "dropout": 0.0
+    "dropout": 0.0,
+    "shape": "pyramid"
   },
   "training": {
     "target_samples": 120000000,
@@ -21,17 +22,17 @@
     "train_ratio": 0.99
   },
   "sweep": {
-    "strategy": "grid",
-    "vary": "batch_size",
-    "values": [64, 128, 256],
+    "strategy": "binary",
+    "vary": "lr",
+    "values": [0.001, 0.01],
     "solve": "b",
-    "budget": 40000000,
-    "fixed": {"n": 5}
+    "budget": 160000000,
+    "fixed": {"n": 2}
   },
   "output": {
-    "workspace": "sessions/norm_comp_ln",
-    "sweep_log": "sessions/norm_comp_layernorm_summary.csv",
+    "workspace": "sessions/pyramid_binary",
+    "sweep_log": "sessions/pyramid_lr_160m_s128_n2_summary.csv",
     "device": "auto",
-    "batch_size": null
+    "batch_size": 128
   }
 }

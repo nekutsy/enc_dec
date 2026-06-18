@@ -12,10 +12,14 @@ class CSVLogger:
         os.makedirs(os.path.dirname(csv_path), exist_ok=True)
 
 
-def get_last_symbols(csv_path):
-    """Read the total_symbols value from the last line of the CSV.
+def get_last_samples(csv_path):
+    """Read total_samples from the last line of the CSV.
 
-    Handles arbitrarily long lines — reads from end of file.
+    New format: '{total_samples},{total_symbols},{train_loss},{val_loss}'
+    Old format: '{total_symbols},{train_loss},{val_loss}'
+
+    For old format, total_symbols is converted to samples via floor division
+    (caller must provide seq_len, or we estimate it).
     """
     if not os.path.isfile(csv_path):
         return 0
@@ -30,10 +34,37 @@ def get_last_symbols(csv_path):
         if len(lines) < 2:
             return 0
         last_line = lines[-1]
-        return int(last_line.split(',')[0])
+        parts = last_line.split(',')
+        first_val = int(parts[0])
+        # Heuristic: if first value is huge (>5x target_samples=5M), it's old format
+        if first_val > 50_000_000:
+            # Old format (total_symbols). Can't infer samples without seq_len.
+            # Return 0 so caller re-trains from scratch.
+            return 0
+        return first_val
     except (ValueError, IndexError, UnicodeDecodeError):
         return 0
 
 
-def get_last_epoch(csv_path):
-    return get_last_symbols(csv_path)
+def get_last_symbols(csv_path):
+    """Legacy — read total_symbols from old-format CSV. Returns 0 for new format."""
+    if not os.path.isfile(csv_path):
+        return 0
+    try:
+        with open(csv_path, 'rb') as f:
+            f.seek(0, 2)
+            size = f.tell()
+            tail = min(size, 8192)
+            f.seek(size - tail)
+            tail_bytes = f.read()
+        lines = tail_bytes.decode('utf-8').strip().splitlines()
+        if len(lines) < 2:
+            return 0
+        last_line = lines[-1]
+        parts = last_line.split(',')
+        if len(parts) >= 2 and int(parts[0]) > 50_000_000:
+            # Old format: first col is total_symbols
+            return int(parts[0])
+        return 0
+    except (ValueError, IndexError, UnicodeDecodeError):
+        return 0

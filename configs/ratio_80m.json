@@ -10,7 +10,7 @@
     "dropout": 0.0
   },
   "training": {
-    "target_symbols": 120000000,
+    "target_samples": 120000000,
     "lr": 0.001,
     "grad_clip": 1.0,
     "scheduler": "cosine",
