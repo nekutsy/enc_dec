@@ -251,34 +251,39 @@ class SweepRunner:
 
             sorted_ns = sorted(valid, key=valid.get)
             best = sorted_ns[0]
+            second = sorted_ns[1]
 
-            # Check neighbors of best — converge when both sides tested
             left_neighbor = _to_step(best - step)
             right_neighbor = _to_step(best + step)
             has_left = best <= lo or left_neighbor in results
             has_right = best >= hi or right_neighbor in results
 
             print(f'  best: {vary_name}={best} ({results[best]:.6f})')
+            print(f'  2nd:  {vary_name}={second} ({results[second]:.6f})')
 
             if has_left and has_right:
                 print(f'  → converged (best surrounded by tested neighbors)\n')
                 break
 
-            # Determine what to test next
-            # Priority: test missing neighbor of best
-            if not has_left and left_neighbor not in results:
-                mid = left_neighbor
-            elif not has_right and right_neighbor not in results:
-                mid = right_neighbor
+            # Bisect between best and second unless they are adjacent.
+            # If adjacent, test the missing neighbor of best (convergence check).
+            if abs(_to_step(best - second)) <= step:
+                # Adjacent — best's other side needs testing
+                if not has_left and left_neighbor not in results:
+                    mid = left_neighbor
+                elif not has_right and right_neighbor not in results:
+                    mid = right_neighbor
+                else:
+                    print(f'  → all values tested — converged\n')
+                    break
             else:
-                second = sorted_ns[1]
-                print(f'  2nd: {vary_name}={second} ({results[second]:.6f})')
+                # Not adjacent — bisect between best and second
                 mid = _to_step((best + second) / 2)
                 if mid in results:
-                    lo2, hi2 = min(best, second), max(best, second)
+                    lo_b, hi_b = min(best, second), max(best, second)
                     found = False
-                    candidate = lo2 + step
-                    while candidate < hi2:
+                    candidate = lo_b + step
+                    while candidate < hi_b:
                         c = _to_step(candidate)
                         if c not in results:
                             mid = c
@@ -286,8 +291,14 @@ class SweepRunner:
                             break
                         candidate += step
                     if not found:
-                        print(f'  → all values tested — converged\n')
-                        break
+                        # All between tested; check missing neighbor as fallback
+                        if not has_left and left_neighbor not in results:
+                            mid = left_neighbor
+                        elif not has_right and right_neighbor not in results:
+                            mid = right_neighbor
+                        else:
+                            print(f'  → all values tested — converged\n')
+                            break
 
             print(f'  → testing {vary_name}={mid}\n')
             val, status = self._train_and_log(mid)
