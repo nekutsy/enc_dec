@@ -48,8 +48,8 @@ class Autoencoder(nn.Module):
 
     def __init__(self, layer_sizes: list[int], name: str = "autoencoder",
                  activation: str = "silu", normalization: str = "batchnorm",
-                 init_gain: float = 0.5,
-                 norm_bottleneck: bool = True, norm_last: bool = True,
+                 init_gain: float = 1.0,
+                 norm_bottleneck: bool = False, norm_last: bool = False,
                  dropout: float = 0.0):
         super().__init__()
         self.name = name

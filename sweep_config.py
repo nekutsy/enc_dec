@@ -23,10 +23,10 @@ class ModelConfig:
     normalization: str = 'batchnorm'  # batchnorm | layernorm | none
     shape: str = 'rectangular'     # rectangular | pyramid
     init: str = 'orthogonal'       # orthogonal | xavier | kaiming
-    init_gain: float = 0.5
+    init_gain: float = 1.0
     dropout: float = 0.0           # 0.0 → no dropout applied
-    norm_bottleneck: bool = True   # apply norm on encoder layer before bottleneck
-    norm_last: bool = True         # apply norm on decoder output layer
+    norm_bottleneck: bool = False  # apply norm on encoder layer before bottleneck
+    norm_last: bool = False        # apply norm on decoder output layer
 
 
 # ── Training configuration ───────────────────────────────────

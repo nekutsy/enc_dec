@@ -134,7 +134,7 @@ def solve_n_for_b(b_val, target_params, input_dim, bottleneck, max_n=20):
 
 
 
-MODEL_LEVEL_VARY = {'normalization', 'activation', 'dropout'}
+MODEL_LEVEL_VARY = {'normalization', 'activation', 'dropout', 'norm_bottleneck', 'norm_last'}
 TRAINING_LEVEL_VARY = {'lr', 'scheduler', 'grad_clip', 'optimizer', 'weight_decay'}
 OUTPUT_LEVEL_VARY = {'batch_size'}
 

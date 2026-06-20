@@ -267,10 +267,10 @@ def run_training(start_samples, max_samples, model, optimizer, criterion,
                         avg_val_loss = _validate(model, val_loader, criterion, device)
                         model.train()
 
-                        if checkpoint_scheduler is not None:
-                            checkpoint_scheduler.step(avg_val_loss)
+                    if checkpoint_scheduler is not None:
+                        checkpoint_scheduler.step(avg_train_loss if no_val else avg_val_loss)
 
-                        # Early stopping (only with val)
+                    if not no_val:
                         if avg_val_loss < best_val_loss:
                             best_val_loss = avg_val_loss
                             stale_checkpoints = 0

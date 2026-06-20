@@ -17,9 +17,9 @@ class _BaseConfig:
     lr_scheduler: str = ""
     lr_warmup_epochs: float = 0.0
     cudnn_benchmark: bool = True
-    init_gain: float = 0.5
-    norm_bottleneck: bool = True
-    norm_last: bool = True
+    init_gain: float = 1.0
+    norm_bottleneck: bool = False
+    norm_last: bool = False
     dropout: float = 0.0
 
 
