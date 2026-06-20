@@ -32,8 +32,9 @@ device = torch.device("cpu")
 def _parse_key(path):
     """Parse model sizes from filename like '2688_7644_7644_128_sweep_n2.pth'.
     
-    Filenames store only the encoder half (up to bottleneck).
-    Reconstruct full architecture by mirroring decoder.
+    Encoder half is a contiguous block of pure-numeric segments at the start.
+    Stops at the first non-digit segment (suffix like 'gain0_1', 'nbF_nlF', etc).
+    Reconstructs full architecture by mirroring decoder.
     """
     base = os.path.basename(path).replace('.pth', '').replace('_best', '')
     parts = base.split('_')
@@ -41,8 +42,8 @@ def _parse_key(path):
     for p in parts:
         if p.isdigit():
             sizes.append(int(p))
-        elif p.startswith('sweep') or p.startswith('batch'):
-            break
+        else:
+            break  # stop at first non-digit segment (model name suffix)
     if len(sizes) < 3:
         return []
     # Encoder half → full mirror architecture
@@ -84,9 +85,23 @@ def _scan_models(sessions_dir="sessions"):
     return sorted(models, key=lambda m: -m[2])
 
 
+def _parse_norm_from_name(name):
+    """Parse norm_bottleneck/norm_last from filename suffix.
+    
+    Looks for patterns like 'nbT_nlT', 'nbF_nlF', etc.
+    Returns (norm_bottleneck, norm_last) defaulting to current best (False, False).
+    """
+    import re
+    m = re.search(r'nb([TF])_nl([TF])', name)
+    if m:
+        return m.group(1) == 'T', m.group(2) == 'T'
+    return False, False  # current best default
+
+
 def _load_model_from_path(path, sizes):
-    """Load a trained model given file path and layer sizes."""
-    model = Autoencoder(sizes).to(device)
+    """Load a trained model given file path, sizes, and optional norm flags."""
+    nb, nl = _parse_norm_from_name(path)
+    model = Autoencoder(sizes, norm_bottleneck=nb, norm_last=nl).to(device)
     state = torch.load(path, map_location=device, weights_only=True)
     if any(k.startswith('_orig_mod.') for k in state.keys()):
         state = {k[len('_orig_mod.'):]: v for k, v in state.items()}
