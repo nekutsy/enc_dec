@@ -4,6 +4,7 @@ import sys
 import torch
 import torch.optim as optim
 import torch.nn as nn
+import torch.nn.functional as F
 from configs import PrimaryConfig, UNICODE_BITS
 from model import Autoencoder
 from data import load_text, prepare_data, split_into_chunks, vec2seq, export_latent_vectors
@@ -33,7 +34,7 @@ def reconstruct_text(model, text: str, config, device) -> str:
         for orig_chunk, bits in chunks:
             inp = torch.tensor([bits], dtype=torch.float32).to(device)
             out = model(inp).squeeze(0).cpu().tolist()
-            rec_str = vec2seq(out)
+            rec_str = vec2seq(torch.sigmoid(out).tolist())
             reconstructed.append(rec_str)
     return ''.join(reconstructed)
 
@@ -54,14 +55,20 @@ def main():
     train_ds, val_ds = prepare_data(text, config)
     layer_sizes = _default_layer_sizes(config)
 
-    model = Autoencoder(layer_sizes, name=config.model_name).to(device)
+    model = Autoencoder(
+        layer_sizes, name=config.model_name,
+        init_gain=config.init_gain,
+        norm_bottleneck=config.norm_bottleneck,
+        norm_last=config.norm_last,
+        dropout=config.dropout,
+    ).to(device)
     model = compile_model(model, device)
 
     model_path, csv_path = save_paths(layer_sizes, config.model_name)
     print(f'Model: {model_path}')
 
     optimizer = optim.AdamW(model.parameters(), lr=config.learning_rate, fused=config.device == 'cuda')
-    criterion = nn.MSELoss()
+    criterion = nn.BCEWithLogitsLoss()
     logger = CSVLogger(csv_path)
 
     start_symbols = train_setup(config, model, optimizer, csv_path, model_path, device)
@@ -69,7 +76,7 @@ def main():
     total_epochs = 30
     total_symbols_per_epoch = len(train_ds) * config.seq_len
     target_symbols = total_epochs * total_symbols_per_epoch
-    step_sch, ckpt_sch = build_scheduler(optimizer, config, total_epochs)
+    step_sch, ckpt_sch = build_scheduler(optimizer, config, total_epochs, start_samples=start_symbols)
 
     print(f'Training {total_epochs} epochs ({target_symbols:,} symbols)...')
     try:

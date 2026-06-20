@@ -1,5 +1,6 @@
 /sessions/*
 /data/output/*
+/data/cache/*
 /data/models/*
 ___pycache___
 __pycache__
@@ -7,4 +8,5 @@ __pycache__
 *.pth
 *.opt
 *.csv
+*.log
 archive

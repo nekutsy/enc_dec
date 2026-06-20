@@ -6,7 +6,25 @@ UNICODE_BITS = 21  # bits per character in unicode-21 encoding
 
 
 @dataclass(slots=True)
-class PrimaryConfig:
+class _BaseConfig:
+    """Common training parameters shared across autoencoder configs."""
+    learning_rate: float = 0.001
+    batch_size: int = 1024
+    device: str = "cuda"
+    model_name: str = "model"
+    grad_clip: float = 1.0
+    num_workers: int = 0
+    lr_scheduler: str = ""
+    lr_warmup_epochs: float = 0.0
+    cudnn_benchmark: bool = True
+    init_gain: float = 0.5
+    norm_bottleneck: bool = True
+    norm_last: bool = True
+    dropout: float = 0.0
+
+
+@dataclass(slots=True)
+class PrimaryConfig(_BaseConfig):
     """Configuration for the primary (text → latent) autoencoder."""
 
     seq_len: int = 128
@@ -16,32 +34,5 @@ class PrimaryConfig:
     learning_rate: float = 0.00005
     train_ratio: float = 0.99
     batch_size: int = 1024
-    device: str = "cuda"
     model_name: str = "primary_base"
-    grad_clip: float = 1.0
-    num_workers: int = 0
-    lr_scheduler: str = ""  # "cosine" | "plateau" | ""
-    lr_warmup_epochs: float = 0.0  # warmup before max LR
     early_stop_patience: int = 3
-    cudnn_benchmark: bool = True
-
-
-@dataclass(slots=True)
-class SecondaryConfig:
-    """Configuration for the secondary (latent prediction) autoencoder."""
-
-    n: int = 2
-    bottleneck_primary: int = 8
-    input_dim: int = n * bottleneck_primary
-    hidden_dim: int = input_dim * 2
-    bottleneck: int = input_dim // 4
-    output_dim: int = input_dim + 1
-    learning_rate: float = 0.001
-    batch_size: int = 1024
-    device: str = "cuda"
-    model_name: str = "secondary"
-    grad_clip: float = 1.0
-    num_workers: int = 0
-    lr_scheduler: str = ""
-    lr_warmup_epochs: float = 0.0
-    cudnn_benchmark: bool = True

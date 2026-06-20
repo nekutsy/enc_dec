@@ -122,7 +122,7 @@ python sweep.py grid --vary seq_len=4,8,16,32,64,128 \
   },
   
   "training": {
-    "target_symbols": 120000000,
+    "target_samples": 5000000,
     "lr": 0.001,
     "grad_clip": 1.0,
     "scheduler": "cosine",
@@ -167,7 +167,7 @@ python sweep.py grid --vary seq_len=4,8,16,32,64,128 \
 
 | Поле | Тип | По умолчанию | Описание |
 |------|-----|-------------|----------|
-| `target_symbols` | int | 120M | Сколько total символов обучать (≠ эпох) |
+| `target_samples` | int | 5M | Сколько сэмплов обучать (batch_size × шаги) |
 | `lr` | float | 0.001 | Learning rate |
 | `grad_clip` | float | 1.0 | Max gradient norm |
 | `scheduler` | str | `cosine` | `cosine` \| `plateau` \| `none` |
@@ -309,9 +309,9 @@ JSON config / CLI args
 Модели автоматически возобновляются с последнего чекпоинта, если:
 
 1. CSV-файл существует
-2. `total_symbols` в CSV < `target_symbols`
+2. `total_samples` в CSV < `target_samples`
 
-Модели, уже достигшие `target_symbols`, пропускаются.
+Модели, уже достигшие `target_samples`, пропускаются.
 
 ### Формат CSV-лога
 

@@ -8,7 +8,8 @@ from torch.utils.data import Dataset
 
 from configs import UNICODE_BITS
 
-FULL_BITS_CACHE = "data/cache/full_bits.pt"
+FULL_BITS_CACHE = "data/cache/full_bits.u8"   # uint8 packed — 8 bits/byte (~0.13 GB)
+OLD_FLOAT_CACHE = "data/cache/full_bits.pt"   # legacy float32 (auto-migrated)
 
 
 def load_text(data_dir="data/dataset"):
@@ -27,24 +28,64 @@ def load_text(data_dir="data/dataset"):
     return "".join(texts)
 
 
-def _build_full_bits(text):
-    """Build and cache a single float32 tensor of ALL character bits — 1D, ~2GB.
+def _pack_bits_uint8(codes: np.ndarray) -> np.ndarray:
+    """Pack Unicode codepoint bits into uint8: 8 bits per byte, little-endian.
 
-    This is the single source of truth. Sliding-window datasets create
-    torch.as_strided views into this tensor without copying.
+    codes: (N,) uint32 → packed uint8 with ceil(N*UNICODE_BITS/8) bytes.
+    """
+    total_bits = len(codes) * UNICODE_BITS
+    bits = np.zeros(total_bits, dtype=np.uint8)
+    for i in range(UNICODE_BITS):
+        bits[i::UNICODE_BITS] = (codes >> (UNICODE_BITS - 1 - i)) & 1
+    n_padded = ((total_bits + 7) // 8) * 8
+    padded = np.zeros(n_padded, dtype=np.uint8)
+    padded[:total_bits] = bits
+    return np.packbits(padded.reshape(-1, 8), axis=1, bitorder='little').ravel()
+
+
+def _unpack_uint8_to_float(packed, total_bits: int) -> torch.Tensor:
+    """Unpack uint8 → float32 tensor of exact 0.0/1.0 values."""
+    if isinstance(packed, torch.Tensor):
+        packed = packed.cpu().numpy()
+    packed = np.asarray(packed, dtype=np.uint8)
+    if len(packed) == 0:
+        return torch.zeros(total_bits, dtype=torch.float32)
+    unpacked = np.unpackbits(packed, bitorder='little')
+    return torch.from_numpy(unpacked[:total_bits].astype(np.float32))
+
+
+def _build_full_bits(text):
+    """Build/cache packed uint8 on disk; return float32 tensor for sliding windows.
+
+    Disk: uint8 packed (~0.13 GB for 50M chars × 21 bits).
+    RAM: float32 (~4.2 GB) — required for torch.as_strided.
+    Auto-migrates legacy float32 cache.
     """
     os.makedirs("data/cache", exist_ok=True)
-    if os.path.exists(FULL_BITS_CACHE):
-        return torch.load(FULL_BITS_CACHE, weights_only=True)
-
     codes = np.array([ord(ch) for ch in text], dtype=np.uint32)
-    bits = np.zeros((len(codes), UNICODE_BITS), dtype=np.float32)
-    for i in range(UNICODE_BITS):
-        bits[:, i] = (codes >> (UNICODE_BITS - 1 - i)) & 1
-    full_flat = torch.from_numpy(bits.ravel())
-    torch.save(full_flat, FULL_BITS_CACHE)
-    print(f"  Built full_bits cache: {full_flat.shape} ({full_flat.numel() * 4 / 1e9:.2f} GB)")
-    return full_flat
+    total_bits = len(codes) * UNICODE_BITS
+
+    # Existing uint8 cache
+    if os.path.exists(FULL_BITS_CACHE):
+        packed = torch.load(FULL_BITS_CACHE, map_location='cpu', weights_only=True)
+        print(f"  Loaded uint8 cache: {packed.numel() / 1e6:.1f} MB")
+        return _unpack_uint8_to_float(packed, total_bits)
+
+    # Legacy float32 cache → migrate
+    if os.path.exists(OLD_FLOAT_CACHE):
+        print("  Migrating old float32 cache → uint8...")
+        packed = torch.from_numpy(_pack_bits_uint8(codes))
+        torch.save(packed, FULL_BITS_CACHE)
+        os.remove(OLD_FLOAT_CACHE)
+        print(f"  Migrated: {packed.numel() / 1e6:.1f} MB uint8")
+        return _unpack_uint8_to_float(packed, total_bits)
+
+    # Fresh build
+    packed = torch.from_numpy(_pack_bits_uint8(codes))
+    torch.save(packed, FULL_BITS_CACHE)
+    n_gb = packed.numel() / 1e9
+    print(f"  Built uint8 cache: {n_gb:.2f} GB (unpacked: {total_bits * 4 / 1e9:.2f} GB float32)")
+    return _unpack_uint8_to_float(packed, total_bits)
 
 
 class SlidingWindowDataset(Dataset):
@@ -59,7 +100,7 @@ class SlidingWindowDataset(Dataset):
         self.seq_len = seq_len
         self.window_bits = seq_len * UNICODE_BITS
         n_total = full_bits.numel() // UNICODE_BITS - seq_len + 1
-        # as_strided view: (n_windows, window_bits) with stride (21, 1)
+        # as_strided view: (n_windows, window_bits) with stride (UNICODE_BITS, 1)
         self._windows = torch.as_strided(
             full_bits,
             size=(n_total, self.window_bits),
@@ -74,8 +115,10 @@ class SlidingWindowDataset(Dataset):
         return len(self._indices)
 
     def __getitem__(self, idx):
-        w = self._windows[self._indices[idx]].clone()  # clone → contiguous for DataLoader
-        return w, w  # (input, target) for autoencoder
+        # empty_like + copy_ is cheaper than clone() for strided views
+        w = torch.empty(self.window_bits, dtype=torch.float32, device='cpu')
+        w.copy_(self._windows[self._indices[idx]])
+        return w, w
 
 
 def chars_to_bits(codes: np.ndarray) -> np.ndarray:
@@ -119,9 +162,9 @@ def split_into_chunks(text: str, max_bits: int):
 def prepare_data(text: str, config):
     """Build sliding-window dataset and return (train_ds, val_ds) — lazy.
 
-    Uses shared full_bits cache (~2 GB) + per-seq_len as_strided view.
+    Uses shared uint8-packed cache + per-seq_len as_strided view.
     Returns SlidingWindowDataset objects with non-overlapping indices.
-    Each __getitem__ clones a single window → DataLoader handles batching.
+    Each __getitem__ materializes a single window → DataLoader handles batching.
     """
     full_bits = _build_full_bits(text)
     dataset = SlidingWindowDataset(full_bits, config.seq_len)
@@ -142,7 +185,7 @@ def export_latent_vectors(model, text, config, device, output_path="data/latent/
     latents = []
     with torch.inference_mode():
         for batch in loader:
-            x_batch, _ = batch  # sliding window returns (input, target)
+            x_batch, _ = batch
             x_batch = x_batch.to(device)
             z = model.encode(x_batch)
             latents.append(z.cpu())

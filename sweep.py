@@ -29,9 +29,10 @@ from sweep_config import SweepConfig
 # ── Helpers ──────────────────────────────────────────────────
 
 def _parse_size(s):
-    """Parse "40M" → 40_000_000, "40" → 40_000_000."""
-    s = s.upper().rstrip('M')
-    return int(float(s) * 1_000_000)
+    """Parse "40M" → 40_000_000, "5000" → 5_000."""
+    if s.upper().endswith('M'):
+        return int(float(s[:-1]) * 1_000_000)
+    return int(s)
 
 
 def _parse_fixed(fixed_args):
@@ -143,7 +144,8 @@ class SweepRunner:
 
         # Prefix must include model-level vary params to avoid path collision
         prefix = f'sweep_{vary_name}{vary_value}'
-        if vary_name in ('normalization', 'activation', 'dropout', 'batch_size'):
+        if vary_name in ('normalization', 'activation', 'dropout', 'batch_size',
+                         'norm_bottleneck', 'norm_last', 'init_gain'):
             prefix = f'{vary_name}_{vary_value}_sweep'
         val, status, actual_samples = train_one(arch, cfg, prefix)
         _cuda_safe_cleanup()
@@ -165,7 +167,8 @@ class SweepRunner:
             'batch_size': cfg.output.batch_size,
             'total_samples': actual_samples,
             'total_symbols': actual_samples * seq_len,
-            'final_val_loss': val if val is not None else '',
+            'final_train_loss': val if val is not None else '',
+            'final_val_loss': '',
             'status': status,
             'duration_seconds': '',
         })
@@ -301,12 +304,12 @@ class SweepRunner:
             return
         print(f'{"="*55}')
         print(f'RESULTS: {self.cfg.name}')
-        print(f'{"vary":>8}  {"val_loss":>10}')
+        print(f'{"vary":>8}  {"train_loss":>10}')
         print('-' * 25)
         for v in sorted(self.results):
             print(f'{v:>8}  {self.results[v]:>10.6f}')
         best = min(self.results, key=self.results.get)
-        print(f'\n  ★ best: {self.cfg.sweep.vary}={best}  val={self.results[best]:.6f}')
+        print(f'\n  ★ best: {self.cfg.sweep.vary}={best}  train={self.results[best]:.6f}')
         print(f'{"="*55}')
 
 
@@ -366,7 +369,7 @@ def _run_grid_with_binary(outer_config: SweepConfig, binary_vary, binary_range):
         if results:
             best = min(results, key=results.get)
             all_best[outer_val] = best
-            print(f'  ★ [{cfg.sweep.vary}={outer_val}] best {binary_vary}={best}  val={results[best]:.6f}')
+            print(f'  ★ [{cfg.sweep.vary}={outer_val}] best {binary_vary}={best}  train={results[best]:.6f}')
 
     if all_best:
         print(f'\n{"="*60}')

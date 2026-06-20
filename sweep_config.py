@@ -25,6 +25,8 @@ class ModelConfig:
     init: str = 'orthogonal'       # orthogonal | xavier | kaiming
     init_gain: float = 0.5
     dropout: float = 0.0           # 0.0 → no dropout applied
+    norm_bottleneck: bool = True   # apply norm on encoder layer before bottleneck
+    norm_last: bool = True         # apply norm on decoder output layer
 
 
 # ── Training configuration ───────────────────────────────────
@@ -39,6 +41,7 @@ class TrainingConfig:
     warmup_fraction: float = 0.05   # fraction of total steps for warmup
     optimizer: str = 'adamw_fused'  # adamw_fused | adamw | sgd
     weight_decay: float = 0.01
+    decay_linear_only: bool = True  # True → decay only on Linear; False → all params
     early_stop_patience: int = 3
     train_ratio: float = 0.99
 

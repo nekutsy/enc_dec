@@ -8,9 +8,13 @@ Commands:
   full [pos]        First 20 windows from dataset (sequential)
   <text>            Reconstruct text (auto-pads to seq_len)
   q, quit           Exit
+
+Options:
+  --gpu             Use GPU (default: CPU for interactive, auto for val)
+  --cpu             Force CPU (default for interactive)
 """
 
-import torch, sys, os, random, glob, re, csv
+import argparse, torch, sys, os, random, glob, re, csv
 sys.path.insert(0, os.path.dirname(__file__))
 
 from configs import UNICODE_BITS
@@ -19,8 +23,10 @@ from data import _build_full_bits, load_text, vec2seq, chars_to_bits, prepare_da
 import numpy as np
 from trainers import _validate
 import torch.nn as nn
+import torch.nn.functional as F
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# Module-level device — overridden by main()
+device = torch.device("cpu")
 
 
 def _parse_key(path):
@@ -45,21 +51,36 @@ def _parse_key(path):
 
 
 def _scan_models(sessions_dir="sessions"):
-    """Walk sessions/ for .pth files, return list of (path, sizes, n_params, folder)."""
-    models = []
+    """Walk sessions/ for .pth files, return list of (path, sizes, n_params, folder).
+    
+    Picks _best.pth over .pth when both exist in the same folder.
+    Deduplicates by (folder, clean_base).
+    """
+    candidates = {}  # (folder, clean_base) → (path, is_best)
     for root, dirs, files in os.walk(sessions_dir):
         for f in files:
-            if f.endswith('.pth') and '_best' not in f and 'training_losses' not in f:
-                full = os.path.join(root, f)
-                sizes = _parse_key(full)
-                if len(sizes) < 3:
-                    continue
-                n_params = sum(
-                    sizes[i] * sizes[i+1] + sizes[i+1] + 2 * sizes[i+1]
-                    for i in range(len(sizes) - 1)
-                )
-                folder = os.path.relpath(root, sessions_dir)
-                models.append((full, sizes, n_params, folder))
+            if not f.endswith('.pth') or 'training_losses' in f:
+                continue
+            full = os.path.join(root, f)
+            base = f.replace('.pth', '')
+            is_best = base.endswith('_best')
+            clean_base = base[:-5] if is_best else base
+            folder = os.path.relpath(root, sessions_dir)
+            key = (folder, clean_base)
+            # Prefer _best version within same folder
+            if key not in candidates or is_best:
+                candidates[key] = (full, is_best)
+    
+    models = []
+    for (folder, clean_base), (full, is_best) in candidates.items():
+        sizes = _parse_key(full)
+        if len(sizes) < 3:
+            continue
+        n_params = sum(
+            sizes[i] * sizes[i+1] + sizes[i+1] + 2 * sizes[i+1]
+            for i in range(len(sizes) - 1)
+        )
+        models.append((full, sizes, n_params, folder))
     return sorted(models, key=lambda m: -m[2])
 
 
@@ -83,7 +104,7 @@ def _compute_val_loss(model, text, seq_len):
     val_loader = DataLoader(val_ds, batch_size=256, shuffle=False,
                             num_workers=2 if device.type == 'cuda' else 0,
                             pin_memory=(device.type == 'cuda'))
-    criterion = nn.MSELoss()
+    criterion = nn.BCEWithLogitsLoss()
     return _validate(model, val_loader, criterion, device)
 
 
@@ -95,14 +116,20 @@ def _reconstruct(model, chunk, sl):
     inp_t = torch.from_numpy(bits_np).float().unsqueeze(0).to(device)
     with torch.inference_mode():
         out = model(inp_t).squeeze(0).cpu().numpy()
+    out = torch.sigmoid(torch.from_numpy(out)).numpy()
     rec = vec2seq(out)
     errors = sum(1 for a, b in zip(padded, rec) if a != b)
     bit_err = np.abs(bits_np - out).sum()
     return rec, errors, bit_err
 
 
-def main():
-    print(f"Device: {device}\n")
+def main(device_override=None):
+    global device
+    if device_override is not None:
+        device = device_override
+    else:
+        device = torch.device("cpu")  # default: CPU for interactive use
+    print(f"Device: {device}")
 
     # ── Scan models ──
     print("Scanning for trained models...")
@@ -245,4 +272,13 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description='Interactive model inference')
+    parser.add_argument('--gpu', action='store_true', help='Use GPU')
+    parser.add_argument('--cpu', action='store_true', help='Force CPU (default)')
+    args = parser.parse_args()
+    if args.gpu and torch.cuda.is_available():
+        main(torch.device("cuda"))
+    else:
+        if args.gpu:
+            print("CUDA not available, falling back to CPU")
+        main(torch.device("cpu"))

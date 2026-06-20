@@ -16,7 +16,7 @@ import torch.nn as nn
 from configs import PrimaryConfig, UNICODE_BITS
 from model import Autoencoder
 from data import load_text, prepare_data
-from trainers import run_training, build_scheduler, _cuda_safe_cleanup
+from trainers import run_training, build_scheduler, _cuda_safe_cleanup, _load_optimizer
 from logger import CSVLogger, get_last_samples
 from sweep_config import SweepConfig
 
@@ -277,12 +277,22 @@ def compile_model(model, device):
 # ── Checkpoint resume ────────────────────────────────────────
 
 def train_setup(config, model, optimizer, csv_path, model_path, device):
-    """Load checkpoint if available, return (start_samples, start_symbols).
+    """Load checkpoint if available, return start_samples.
     
+    Falls back to _best.pth if main checkpoint is missing.
     Falls back to old single-column CSV (total_symbols only) if new format not found.
     """
     start_samples = get_last_samples(csv_path)
     if start_samples > 0:
+        # Fallback: _best.pth if main .pth missing
+        if not os.path.isfile(model_path):
+            best_path = model_path.replace('.pth', '_best.pth')
+            if os.path.isfile(best_path):
+                model_path = best_path
+                print(f'  Using _best checkpoint (main .pth missing)')
+        if not os.path.isfile(model_path):
+            print(f'  No checkpoint found — starting from scratch')
+            return 0
         print(f'  Resuming from {start_samples:,} samples. Loading checkpoint...')
         state = torch.load(model_path, map_location=device, weights_only=True)
         has_prefix = any(k.startswith('_orig_mod.') for k in state.keys())
@@ -292,12 +302,6 @@ def train_setup(config, model, optimizer, csv_path, model_path, device):
         unwrapped.load_state_dict(state)
         _load_optimizer(optimizer, model_path, device)
     return start_samples
-
-
-def _load_optimizer(optimizer, model_path, device):
-    opt_path = model_path + '.opt'
-    if os.path.isfile(opt_path):
-        optimizer.load_state_dict(torch.load(opt_path, map_location=device, weights_only=True))
 
 
 # ── CSV logging helpers ──────────────────────────────────────
@@ -335,7 +339,7 @@ def gather_done(sweep_log, target_samples, seq_len=None):
         for row in reader:
             try:
                 status = row.get('status', '')
-                val_str = row.get('final_val_loss', '')
+                val_str = row.get('final_val_loss', '') or row.get('final_train_loss', '')
                 vary_str = row.get('vary_value', '')
 
                 # Determine samples completed
@@ -406,7 +410,7 @@ def train_one(arch, sweep_config: SweepConfig, model_prefix):
             with open(csv_path) as f:
                 rows = list(csv.reader(f))
                 val = float(rows[-1][3]) if len(rows[-1]) > 3 else float(rows[-1][2])
-            print(f'  already done ({last_samples:,} samples, val={val:.6f})')
+            print(f'  already done ({last_samples:,} samples, train={val:.6f})')
             return val, 'done', last_samples
 
     config = PrimaryConfig(
@@ -422,11 +426,15 @@ def train_one(arch, sweep_config: SweepConfig, model_prefix):
 
     train_ds, val_ds = prepare_data(text, config)
 
-    # Build model with configurable activation/norm
+    # Build model with configurable activation/norm/init
     try:
         model = Autoencoder(
             sizes, name=config.model_name,
             activation=mc.activation, normalization=mc.normalization,
+            init_gain=mc.init_gain,
+            norm_bottleneck=mc.norm_bottleneck,
+            norm_last=mc.norm_last,
+            dropout=mc.dropout,
         ).to(device)
     except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
         if isinstance(e, RuntimeError) and 'out of memory' not in str(e).lower():
@@ -445,26 +453,45 @@ def train_one(arch, sweep_config: SweepConfig, model_prefix):
         del model
         return None, 'oom', 0
 
-    # Optimizer selection
+    # Optimizer — decay only on Linear.weight by default (BatchNorm/LayerNorm biases excluded)
+    if tc.decay_linear_only:
+        decay_params = []
+        no_decay_params = []
+        for name, param in model.named_parameters():
+            if not param.requires_grad:
+                continue
+            # weight tensors of Linear layers are 2D; biases, norm scales (1D) excluded
+            if param.dim() >= 2:
+                decay_params.append(param)
+            else:
+                no_decay_params.append(param)
+        optim_groups = [
+            {'params': decay_params, 'weight_decay': tc.weight_decay},
+            {'params': no_decay_params, 'weight_decay': 0.0},
+        ]
+    else:
+        optim_groups = model.parameters()
+
     if tc.optimizer == 'adamw_fused' and device.type == 'cuda':
-        optimizer = optim.AdamW(model.parameters(), lr=lr,
+        optimizer = optim.AdamW(optim_groups, lr=lr,
                                 weight_decay=tc.weight_decay, fused=True)
     elif tc.optimizer in ('adamw', 'adamw_fused'):
-        optimizer = optim.AdamW(model.parameters(), lr=lr,
+        optimizer = optim.AdamW(optim_groups, lr=lr,
                                 weight_decay=tc.weight_decay)
     elif tc.optimizer == 'sgd':
-        optimizer = optim.SGD(model.parameters(), lr=lr,
+        optimizer = optim.SGD(optim_groups, lr=lr,
                               weight_decay=tc.weight_decay, momentum=0.9)
     else:
-        optimizer = optim.AdamW(model.parameters(), lr=lr,
+        optimizer = optim.AdamW(optim_groups, lr=lr,
                                 weight_decay=tc.weight_decay)
 
     total_batches = int(target_samples / bs) + 1
-    step_scheduler, checkpoint_scheduler = build_scheduler(optimizer, config, total_batches)
-    criterion = nn.MSELoss()
+    start_samples = train_setup(config, model, optimizer, csv_path, model_path, device)
+    step_scheduler, checkpoint_scheduler = build_scheduler(
+        optimizer, config, total_batches, start_samples=start_samples)
+    criterion = nn.BCEWithLogitsLoss()
     logger = CSVLogger(csv_path)
 
-    start_samples = train_setup(config, model, optimizer, csv_path, model_path, device)
     rem = max(0, target_samples - start_samples)
     if rem <= 0:
         return val, 'done', start_samples
@@ -479,14 +506,16 @@ def train_one(arch, sweep_config: SweepConfig, model_prefix):
             seq_len, tc.grad_clip, 2,
             step_scheduler=step_scheduler,
             checkpoint_scheduler=checkpoint_scheduler,
-            early_stop_patience=config.early_stop_patience)
+            early_stop_patience=config.early_stop_patience,
+            no_val=True)
 
         with open(csv_path) as f:
             rows = list(csv.reader(f))
-        val = float(rows[-1][3]) if len(rows[-1]) > 3 else float(rows[-1][2]) if rows and len(rows[-1]) > 2 else 0
+        # no_val: col 2 = train_loss, col 3 = train_loss (duplicate placeholder)
+        train = float(rows[-1][2]) if len(rows) > 1 else 0
         dur = time_mod.time() - t_start
-        print(f'  done: {final_samples:,} samples in {dur:.0f}s  val={val:.6f}')
-        return val, 'done', final_samples
+        print(f'  done: {final_samples:,} samples in {dur:.0f}s  train={train:.6f}')
+        return train, 'done', final_samples
     except torch.cuda.OutOfMemoryError:
         print(f'  ⚠ OOM')
         _cuda_safe_cleanup()

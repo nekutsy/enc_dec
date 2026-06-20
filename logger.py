@@ -36,12 +36,15 @@ def get_last_samples(csv_path):
         last_line = lines[-1]
         parts = last_line.split(',')
         first_val = int(parts[0])
-        # Heuristic: if first value is huge (>5x target_samples=5M), it's old format
-        if first_val > 50_000_000:
+        # Heuristic: if there are 4 columns, it's new format; 3 columns = old format.
+        # New: total_samples,total_symbols,train_loss,val_loss
+        # Old: total_symbols,train_loss,val_loss
+        if len(parts) >= 4:
+            return first_val
+        elif len(parts) == 3:
             # Old format (total_symbols). Can't infer samples without seq_len.
-            # Return 0 so caller re-trains from scratch.
             return 0
-        return first_val
+        return 0
     except (ValueError, IndexError, UnicodeDecodeError):
         return 0
 
