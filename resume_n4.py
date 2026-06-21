@@ -11,7 +11,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
-from configs import PrimaryConfig, UNICODE_BITS
+from configs import UNICODE_BITS
 from model import Autoencoder
 from data import load_text, prepare_data
 from trainers import _cuda_safe_cleanup
@@ -48,14 +48,7 @@ torch.set_float32_matmul_precision('high')
 
 # ── Load text & data ─────────────────────────────────────────
 text = load_text()
-config = PrimaryConfig(
-    seq_len=SEQ_LEN, input_dim=sizes[0], hidden_dim=HIDDEN_DIM,
-    bottleneck=BOTTLENECK, learning_rate=LR, train_ratio=0.99,
-    batch_size=BATCH_SIZE, device=device.type, model_name=model_prefix,
-    grad_clip=GRAD_CLIP, num_workers=2,
-    lr_scheduler='', early_stop_patience=3, cudnn_benchmark=False,
-)
-train_ds, val_ds = prepare_data(text, config)
+train_ds, val_ds = prepare_data(text, SEQ_LEN, train_ratio=0.99)
 epoch_size = len(train_ds)
 
 # ── Model ────────────────────────────────────────────────────
@@ -97,14 +90,13 @@ print('  Starting fresh optimizer (LR reset)')
 model = torch.compile(model, mode="default")
 unwrapped = model._orig_mod
 
-# ── Read CSV for start position ──────────────────────────────
+# ── Read CSV for start position ─────────────────────────────
 import csv
 start_samples = 0
 if os.path.isfile(csv_path):
     with open(csv_path) as f:
         reader = csv.reader(f)
         header = next(reader, None)
-        val_col = header.index('train_loss') if header and 'train_loss' in header else 2
         for row in reader:
             pass
         if row:
@@ -145,7 +137,7 @@ loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True,
 
 model.train()
 total = start_samples
-CKPT_EVERY = 500_000  # samples between checkpoints
+CKPT_EVERY = 500_000
 next_ckpt = total + CKPT_EVERY
 interval_loss_sum = 0.0
 interval_loss_count = 0
@@ -156,7 +148,7 @@ for batch_idx, batch in enumerate(loader):
     if _interrupted:
         print('\n  Interrupted — saving checkpoint...')
         torch.save(unwrapped.state_dict(), model_path)
-        torch.save(optimizer.state_dict(), opt_path := model_path + '.opt')
+        torch.save(optimizer.state_dict(), model_path + '.opt')
         _cuda_safe_cleanup()
         sys.exit(0)
 
@@ -179,7 +171,6 @@ for batch_idx, batch in enumerate(loader):
     interval_loss_count += bs
     logger.on_batch_end(total, loss.item())
 
-    # ── Checkpoint log ──
     if total >= next_ckpt:
         avg_loss = interval_loss_sum / interval_loss_count if interval_loss_count > 0 else 0
         cur_lr = scheduler.get_last_lr()[0]
@@ -196,10 +187,10 @@ for batch_idx, batch in enumerate(loader):
         break
 
 # ── Final ───────────────────────────────────────────────────
-avf_loss = interval_loss_sum / interval_loss_count if interval_loss_count > 0 else loss.item()
-logger.log_final(total, avf_loss, epoch_size,
+avg_loss = interval_loss_sum / interval_loss_count if interval_loss_count > 0 else 0
+logger.log_final(total, avg_loss, epoch_size,
                  duration_seconds=time.time() - t_start)
 torch.save(unwrapped.state_dict(), model_path)
 torch.save(optimizer.state_dict(), model_path + '.opt')
 _cuda_safe_cleanup()
-print(f'\nDone! Final loss: {avf_loss:.6f} at {total:,} samples')
+print(f'\nDone! Final loss: {avg_loss:.6f} at {total:,} samples')

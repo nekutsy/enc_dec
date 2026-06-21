@@ -1,6 +1,11 @@
-"""Configuration dataclasses for enc_dec sweeps — JSON-serializable.
+"""Configuration dataclasses for enc_dec — JSON-serializable, zero runtime state.
 
-All fields have sensible defaults; minimal required fields are documented per class.
+Three clean layers:
+  ModelConfig    — architecture, activations, norms
+  TrainConfig    — optimizer, LR, scheduler, batch, early-stopping
+  OutputConfig   — paths, device preference, sweep log
+
+Runtime-only state lives in sweep_lib.RuntimeContext.
 """
 
 import json
@@ -12,38 +17,42 @@ from typing import Any
 
 @dataclass
 class ModelConfig:
-    """Autoencoder model definition.
+    """Autoencoder architecture definition.
 
-    Required: seq_len
-    Everything else defaults to sane values.
+    Serialisable. No runtime state.
     """
     seq_len: int = 32
-    bottleneck: int | None = None  # None → seq_len
-    activation: str = 'silu'       # silu | relu | gelu | leaky_relu
-    normalization: str = 'batchnorm'  # batchnorm | layernorm | none
-    shape: str = 'rectangular'     # rectangular | pyramid
-    init: str = 'orthogonal'       # orthogonal | xavier | kaiming
+    bottleneck: int | None = None      # None → seq_len
+    activation: str = 'silu'           # silu | relu | gelu | leaky_relu
+    normalization: str = 'batchnorm'   # batchnorm | layernorm | none
+    shape: str = 'rectangular'         # rectangular | pyramid
+    init: str = 'orthogonal'           # orthogonal | xavier | kaiming
     init_gain: float = 1.0
-    dropout: float = 0.0           # 0.0 → no dropout applied
-    norm_bottleneck: bool = False  # apply norm on encoder layer before bottleneck
-    norm_last: bool = False        # apply norm on decoder output layer
+    dropout: float = 0.0
+    norm_bottleneck: bool = False      # norm on bottleneck layer
+    norm_last: bool = False            # norm on final decoder layer
 
 
 # ── Training configuration ───────────────────────────────────
 
 @dataclass
-class TrainingConfig:
-    """Training loop settings."""
+class TrainConfig:
+    """Training recipe — optimizer, scheduler, budget, early-stopping.
+
+    Serialisable. Independent of ModelConfig — mix and match freely.
+    """
     target_samples: int = 5_000_000
+    batch_size: int = 256
     lr: float = 0.001
     grad_clip: float = 1.0
-    scheduler: str = 'onecycle'  # onecycle | plateau | cosine | none
-    warmup_fraction: float = 0.05   # fraction of total steps for warmup
-    optimizer: str = 'adamw_fused'  # adamw_fused | adamw | sgd
+    scheduler: str = 'onecycle'        # onecycle | plateau | cosine | none
+    warmup_fraction: float = 0.05      # fraction of total steps for warmup
+    optimizer: str = 'adamw_fused'     # adamw_fused | adamw | sgd
     weight_decay: float = 0.01
-    decay_linear_only: bool = True  # True → decay only on Linear; False → all params
+    decay_linear_only: bool = True     # True → only Linear weights; False → all params
     early_stop_patience: int = 3
     train_ratio: float = 0.99
+    num_workers: int = 2               # DataLoader workers (2 for GPU, 0 for CPU)
 
 
 # ── Sweep specification ──────────────────────────────────────
@@ -51,40 +60,42 @@ class TrainingConfig:
 @dataclass
 class SweepSpec:
     """What to vary and how."""
-    strategy: str = 'grid'         # grid | binary
-    vary: str = 'n'                # parameter name
-    values: list = field(default_factory=list)  # grid: list of values; binary: [min, max]
-    solve: str | None = None       # b | n | None
-    budget: int | None = None      # target parameter count
-    fixed: dict = field(default_factory=dict)   # additional fixed params
+    strategy: str = 'grid'             # grid | binary
+    vary: str = 'n'                    # parameter name
+    values: list = field(default_factory=list)
+    solve: str | None = None           # b | n | None
+    budget: int | None = None          # target parameter count
+    fixed: dict = field(default_factory=dict)
 
 
 # ── Output configuration ─────────────────────────────────────
 
 @dataclass
 class OutputConfig:
-    """Where to store results."""
+    """Paths and device preference. No runtime data."""
     workspace: str = 'sessions/sweep'
-    sweep_log: str = 'sessions/sweep_summary.csv'  # global summary CSV
-    device: str = 'auto'           # auto | cuda | cpu
-    batch_size: int | None = None  # None → adaptive
+    sweep_log: str = 'sessions/sweep_summary.csv'
+    device: str = 'auto'               # auto | cuda | cpu
 
 
 # ── Top-level sweep config ───────────────────────────────────
 
 @dataclass
 class SweepConfig:
-    """Complete sweep configuration — one file per experiment."""
+    """Complete sweep configuration — one file per experiment.
+
+    All fields are serialisable. Runtime state (device, text, global_logger)
+    lives in sweep_lib.RuntimeContext.
+    """
     name: str = 'sweep'
     model: ModelConfig = field(default_factory=ModelConfig)
-    training: TrainingConfig = field(default_factory=TrainingConfig)
+    training: TrainConfig = field(default_factory=TrainConfig)
     sweep: SweepSpec = field(default_factory=SweepSpec)
     output: OutputConfig = field(default_factory=OutputConfig)
 
     # ── Serialization ────────────────────────────────────────
 
     def to_dict(self) -> dict:
-        """Recursively convert to plain dict for JSON."""
         def _convert(obj):
             if hasattr(obj, '__dataclass_fields__'):
                 return {k: _convert(v) for k, v in asdict(obj).items()}
@@ -113,7 +124,7 @@ class SweepConfig:
         return cls(
             name=data.get('name', 'sweep'),
             model=ModelConfig(**model_data),
-            training=TrainingConfig(**training_data),
+            training=TrainConfig(**training_data),
             sweep=SweepSpec(**sweep_data),
             output=OutputConfig(**output_data),
         )
@@ -134,7 +145,6 @@ class SweepConfig:
         field_name = parts[-1]
         if not hasattr(obj, field_name):
             raise KeyError(f"Unknown field: {path}")
-        # Coerce type to match existing value
         existing = getattr(obj, field_name)
         if existing is not None:
             try:
@@ -147,7 +157,7 @@ class SweepConfig:
 # ── Preset generators ────────────────────────────────────────
 
 def preset_ratio(budget_m: int) -> SweepConfig:
-    """Generate a ratio sweep config for given budget in millions."""
+    """Ratio sweep at a given budget in millions."""
     return SweepConfig(
         name=f'ratio_{budget_m}m',
         sweep=SweepSpec(
@@ -167,7 +177,7 @@ def preset_ratio(budget_m: int) -> SweepConfig:
 
 
 def preset_binary() -> SweepConfig:
-    """Binary search for optimal n across seq_lens."""
+    """Binary search for optimal width ratios across seq_lens."""
     return SweepConfig(
         name='binary_search',
         sweep=SweepSpec(
@@ -206,6 +216,9 @@ def preset_batch(budget_m: int = 20, n_hidden: int = 3) -> SweepConfig:
     """Batch-size sweep at fixed architecture."""
     return SweepConfig(
         name=f'batch_{budget_m}m_n{n_hidden}',
+        training=TrainConfig(
+            batch_size=64,  # will be overridden by sweep values
+        ),
         sweep=SweepSpec(
             strategy='grid',
             vary='batch_size',

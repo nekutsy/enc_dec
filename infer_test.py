@@ -112,9 +112,7 @@ def _load_model_from_path(path, sizes):
 
 def _compute_val_loss(model, text, seq_len):
     """Quick validation pass to evaluate model quality."""
-    from configs import PrimaryConfig
-    config = PrimaryConfig(seq_len=seq_len)
-    train_ds, val_ds = prepare_data(text, config)
+    train_ds, val_ds = prepare_data(text, seq_len)
     from torch.utils.data import DataLoader
     val_loader = DataLoader(val_ds, batch_size=256, shuffle=False,
                             num_workers=2 if device.type == 'cuda' else 0,

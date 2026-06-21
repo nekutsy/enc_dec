@@ -166,20 +166,19 @@ def split_into_chunks(text: str, max_bits: int):
     return chunks
 
 
-def prepare_data(text: str, config):
-    """Build sliding-window dataset and return (train_ds, val_ds) — lazy.
+def prepare_data(text: str, seq_len: int, train_ratio: float = 0.99):
+    """Build sliding-window dataset and return (train_ds, val_ds).
 
     Uses shared uint8-packed cache + per-seq_len as_strided view.
     Returns SlidingWindowDataset objects with non-overlapping indices.
-    Each __getitem__ materializes a single window → DataLoader handles batching.
     """
     full_bits = _build_full_bits(text)
-    dataset = SlidingWindowDataset(full_bits, config.seq_len)
+    dataset = SlidingWindowDataset(full_bits, seq_len)
     n = len(dataset)
     indices = torch.randperm(n)
-    train_size = int(n * config.train_ratio)
-    train_ds = SlidingWindowDataset(full_bits, config.seq_len, indices=indices[:train_size])
-    val_ds = SlidingWindowDataset(full_bits, config.seq_len, indices=indices[train_size:])
+    train_size = int(n * train_ratio)
+    train_ds = SlidingWindowDataset(full_bits, seq_len, indices=indices[:train_size])
+    val_ds = SlidingWindowDataset(full_bits, seq_len, indices=indices[train_size:])
     return train_ds, val_ds
 
 

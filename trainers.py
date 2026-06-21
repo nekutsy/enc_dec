@@ -64,8 +64,10 @@ def _load_optimizer(optimizer, model_path, device):
 
 # ── Scheduler builder ───────────────────────────────────────
 
-def build_scheduler(optimizer, config, total_steps: int, start_samples: int = 0):
+def build_scheduler(optimizer, train_config, total_steps: int, start_samples: int = 0):
     """Return (per_step_scheduler, per_checkpoint_scheduler).
+
+    train_config: TrainConfig from sweep_config.
     
     per_step_scheduler: called every batch step (e.g. warmup, cosine).
     per_checkpoint_scheduler: called at validation checkpoints with val_loss (plateau).
@@ -73,17 +75,18 @@ def build_scheduler(optimizer, config, total_steps: int, start_samples: int = 0)
     
     If start_samples > 0 (resume): warmup is skipped.
     """
-    if not config.lr_scheduler:
+    scheduler = train_config.scheduler
+    if scheduler == 'none':
         return None, None
 
     total_steps = max(total_steps, 1)
-    warmup_steps = int(config.lr_warmup_epochs * total_steps)
+    warmup_steps = int(train_config.warmup_fraction * total_steps)
 
     # Skip warmup on resume — LR is already at operating value
     if start_samples > 0:
         warmup_steps = 0
 
-    if config.lr_scheduler == "cosine":
+    if scheduler == "cosine":
         warmup = torch.optim.lr_scheduler.LinearLR(
             optimizer, start_factor=0.1, total_iters=warmup_steps
         ) if warmup_steps > 0 else None
@@ -97,7 +100,7 @@ def build_scheduler(optimizer, config, total_steps: int, start_samples: int = 0)
             ), None
         return cosine, None
 
-    if config.lr_scheduler == "plateau":
+    if scheduler == "plateau":
         warmup = torch.optim.lr_scheduler.LinearLR(
             optimizer, start_factor=0.1, total_iters=warmup_steps
         ) if warmup_steps > 0 else None
@@ -106,14 +109,14 @@ def build_scheduler(optimizer, config, total_steps: int, start_samples: int = 0)
         )
         return warmup, plateau
 
-    if config.lr_scheduler == "onecycle":
-        scheduler = torch.optim.lr_scheduler.OneCycleLR(
-            optimizer, max_lr=config.learning_rate,
+    if scheduler == "onecycle":
+        scheduler_obj = torch.optim.lr_scheduler.OneCycleLR(
+            optimizer, max_lr=train_config.lr,
             total_steps=total_steps, pct_start=0.3,
             anneal_strategy='cos', div_factor=25.0,
             final_div_factor=10000.0,
         )
-        return scheduler, None
+        return scheduler_obj, None
 
     return None, None
 

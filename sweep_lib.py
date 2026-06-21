@@ -2,7 +2,8 @@
 
 Architecture helpers: count_params, make_rectangular, solve_b_for_n, solve_n_for_b.
 Training: train_one, compile_model, train_setup, save_paths.
-Logging: GlobalLogger, TrainingLogger.
+Runtime: RuntimeContext, setup_runtime.
+Logging: re-exports from logger.
 """
 
 import os
@@ -12,7 +13,7 @@ import torch
 import torch.optim as optim
 import torch.nn as nn
 
-from configs import PrimaryConfig, UNICODE_BITS
+from configs import UNICODE_BITS
 from model import Autoencoder
 from data import load_text, prepare_data
 from trainers import run_training, build_scheduler, _cuda_safe_cleanup, _load_optimizer
@@ -20,10 +21,49 @@ from logger import (
     TrainingLogger, GlobalLogger, LoggerConfig, get_last_samples,
     init_log, gather_done, log_row, UNIFIED_COLUMNS,  # backward-compat
 )
-from sweep_config import SweepConfig
+from sweep_config import SweepConfig, ModelConfig, TrainConfig, OutputConfig
 
 
-# ── Architecture helpers ──────────────────────────────────────
+# ══════════════════════════════════════════════════════════════
+# RuntimeContext
+# ══════════════════════════════════════════════════════════════
+
+class RuntimeContext:
+    """Transient runtime state — device, text corpus, global logger.
+
+    Not serialisable. Not part of SweepConfig.
+    """
+    def __init__(self, device: torch.device, text: str,
+                 global_logger: GlobalLogger | None = None):
+        self.device = device
+        self.text = text
+        self.global_logger = global_logger
+
+
+def setup_runtime(output: OutputConfig,
+                  global_logger: GlobalLogger | None = None,
+                  text: str | None = None) -> RuntimeContext:
+    """Resolve device + load text → RuntimeContext.
+
+    Centralised replacement for the 8-line pattern duplicated across 5 scripts.
+    """
+    if output.device == 'auto':
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    else:
+        device = torch.device(output.device)
+
+    if device.type == 'cuda':
+        torch.backends.cudnn.benchmark = False
+
+    if text is None:
+        text = load_text()
+
+    return RuntimeContext(device, text, global_logger)
+
+
+# ══════════════════════════════════════════════════════════════
+# Architecture helpers
+# ══════════════════════════════════════════════════════════════
 
 def count_params(layer_sizes):
     """Count Linear + BatchNorm1d parameters."""
@@ -46,13 +86,11 @@ def make_rectangular(input_dim, hidden_dim, bottleneck, n_hidden):
 
 
 def solve_d_for_n(n, target_params, D, B, max_d=None):
-    """Binary search d ∈ [0.1, max_d] such that count_params(make_pyramid(D,B,n,d)) ≈ target_params."""
+    """Binary search d ∈ [0.1, max_d] for pyramid."""
     if max_d is None:
         max_d = D * 10
-
     def _p(d_val):
         return count_params(make_pyramid(D, B, n, d_val))
-
     lo, hi = 0.1, max_d
     for _ in range(50):
         mid = (lo + hi) / 2
@@ -60,7 +98,6 @@ def solve_d_for_n(n, target_params, D, B, max_d=None):
             lo = mid
         else:
             hi = mid
-
     p_lo, p_hi = _p(lo), _p(hi)
     d = lo if abs(p_lo - target_params) <= abs(p_hi - target_params) else hi
     d = round(d, 6)
@@ -83,11 +120,10 @@ def make_pyramid(input_dim, bottleneck, n_hidden, d):
 
 
 def solve_b_for_n(n_hidden, target_params, input_dim, bottleneck):
-    """Binary search b ∈ [0.1, 20] such that total params ≈ target_params."""
+    """Binary search b ∈ [0.1, 20] for rectangular."""
     def _p(b_val):
         h = max(1, int(round(input_dim * b_val)))
         return count_params(make_rectangular(input_dim, h, bottleneck, n_hidden))
-
     lo, hi = 0.1, 20.0
     for _ in range(30):
         mid = (lo + hi) / 2
@@ -95,7 +131,6 @@ def solve_b_for_n(n_hidden, target_params, input_dim, bottleneck):
             lo = mid
         else:
             hi = mid
-
     p_lo, p_hi = _p(lo), _p(hi)
     b_val = round(lo, 6) if abs(p_lo - target_params) <= abs(p_hi - target_params) else round(hi, 6)
     h = max(1, int(round(input_dim * b_val)))
@@ -103,11 +138,10 @@ def solve_b_for_n(n_hidden, target_params, input_dim, bottleneck):
 
 
 def solve_n_for_b(b_val, target_params, input_dim, bottleneck, max_n=20):
-    """Binary search n ∈ [1, max_n] such that total params ≈ target_params."""
+    """Binary search n ∈ [1, max_n] for rectangular."""
     def _p(n):
         h = max(1, int(round(input_dim * b_val)))
         return count_params(make_rectangular(input_dim, h, bottleneck, int(n)))
-
     lo, hi = 1, max_n
     for _ in range(30):
         mid = int((lo + hi) // 2)
@@ -115,7 +149,6 @@ def solve_n_for_b(b_val, target_params, input_dim, bottleneck, max_n=20):
             lo = mid + 1
         else:
             hi = mid
-
     p_lo, p_hi = _p(lo), _p(hi)
     n = lo if abs(p_lo - target_params) <= abs(p_hi - target_params) else hi
     n = max(1, min(n, max_n))
@@ -123,24 +156,27 @@ def solve_n_for_b(b_val, target_params, input_dim, bottleneck, max_n=20):
     return n, h, _p(n)
 
 
-MODEL_LEVEL_VARY = {'normalization', 'activation', 'dropout', 'norm_bottleneck', 'norm_last'}
-TRAINING_LEVEL_VARY = {'lr', 'scheduler', 'grad_clip', 'optimizer', 'weight_decay'}
-OUTPUT_LEVEL_VARY = {'batch_size'}
+# ══════════════════════════════════════════════════════════════
+# Architecture resolution
+# ══════════════════════════════════════════════════════════════
+
+MODEL_LEVEL_VARY = {'normalization', 'activation', 'dropout',
+                    'norm_bottleneck', 'norm_last'}
+TRAIN_LEVEL_VARY = {'lr', 'scheduler', 'grad_clip', 'optimizer', 'weight_decay',
+                    'batch_size', 'num_workers'}
 
 
-def resolve_architecture(vary_value, vary_name, sweep_config: SweepConfig):
+def resolve_architecture(vary_value, vary_name, sweep_config: SweepConfig) -> dict:
     """Resolve full architecture given a candidate vary_value and SweepConfig."""
     mc = sweep_config.model
     sc = sweep_config.sweep
 
     if vary_name in MODEL_LEVEL_VARY:
         setattr(mc, vary_name, vary_value)
-    elif vary_name in TRAINING_LEVEL_VARY:
+    elif vary_name in TRAIN_LEVEL_VARY:
         setattr(sweep_config.training, vary_name, vary_value)
-    elif vary_name in OUTPUT_LEVEL_VARY:
-        sweep_config.output.batch_size = vary_value
 
-    if vary_name in MODEL_LEVEL_VARY | TRAINING_LEVEL_VARY | OUTPUT_LEVEL_VARY:
+    if vary_name in MODEL_LEVEL_VARY | TRAIN_LEVEL_VARY:
         fixed = dict(sc.fixed)
         if 'n' in fixed:
             vary_name, vary_value = 'n', fixed['n']
@@ -156,7 +192,6 @@ def resolve_architecture(vary_value, vary_name, sweep_config: SweepConfig):
 
     fixed = dict(sc.fixed)
     fixed[vary_name] = vary_value
-
     n = fixed.get('n', None)
     b_val = fixed.get('b', None)
     budget = sc.budget
@@ -166,31 +201,20 @@ def resolve_architecture(vary_value, vary_name, sweep_config: SweepConfig):
             assert n is not None, "need fixed n when solve=b"
             d, h_start, n_params = solve_d_for_n(n, budget, input_dim, bottleneck)
             sizes = make_pyramid(input_dim, bottleneck, n, d)
-            return {
-                'sizes': sizes,
-                'b': round(h_start / input_dim, 6),
-                'n': n,
-                'hidden_dim': h_start,
-                'n_params': n_params,
-            }
+            return {'sizes': sizes, 'b': round(h_start / input_dim, 6),
+                    'n': n, 'hidden_dim': h_start, 'n_params': n_params}
         elif sc.solve == 'n':
             raise NotImplementedError("solve=n not supported for pyramid shape")
         elif n is not None and b_val is not None:
             h_start = int(input_dim * b_val)
             d = h_start - bottleneck
             sizes = make_pyramid(input_dim, bottleneck, n, d)
-            n_params = count_params(sizes)
-            return {
-                'sizes': sizes,
-                'b': b_val,
-                'n': n,
-                'hidden_dim': h_start,
-                'n_params': n_params,
-            }
+            return {'sizes': sizes, 'b': b_val, 'n': n,
+                    'hidden_dim': h_start, 'n_params': count_params(sizes)}
         else:
             raise ValueError("Pyramid shape needs solve=b with n, or n+b fixed")
 
-    # --- rectangular ---
+    # rectangular
     if sc.solve == 'b':
         assert n is not None, "need fixed n when solve=b"
         b_val, hidden_dim, n_params = solve_b_for_n(n, budget, input_dim, bottleneck)
@@ -214,17 +238,13 @@ def resolve_architecture(vary_value, vary_name, sweep_config: SweepConfig):
 
     sizes = make_rectangular(input_dim, hidden_dim, bottleneck, n)
     n_params = count_params(sizes)
-
-    return {
-        'sizes': sizes,
-        'b': round(hidden_dim / input_dim, 6) if b_val is None else b_val,
-        'n': n,
-        'hidden_dim': hidden_dim,
-        'n_params': n_params,
-    }
+    return {'sizes': sizes, 'b': round(hidden_dim / input_dim, 6) if b_val is None else b_val,
+            'n': n, 'hidden_dim': hidden_dim, 'n_params': n_params}
 
 
-# ── File paths ────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════
+# File paths
+# ══════════════════════════════════════════════════════════════
 
 def save_paths(layer_sizes, model_name, prefix='sessions'):
     """Return (model_path, csv_path) for a given layer configuration."""
@@ -239,10 +259,12 @@ def save_paths(layer_sizes, model_name, prefix='sessions'):
     return os.path.join(prefix, f'{base}.pth'), os.path.join(prefix, f'training_losses_{base}.csv')
 
 
-# ── Model compilation ────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════
+# Model compilation
+# ══════════════════════════════════════════════════════════════
 
 def compile_model(model, device):
-    """Compile model for GPU — skip for tiny models where overhead dominates."""
+    """Compile model for GPU — skip for tiny models."""
     if device.type == 'cuda':
         n_params = sum(p.numel() for p in model.parameters())
         if n_params > 50_000:
@@ -250,9 +272,11 @@ def compile_model(model, device):
     return model
 
 
-# ── Checkpoint resume ────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════
+# Checkpoint resume
+# ══════════════════════════════════════════════════════════════
 
-def train_setup(config, model, optimizer, csv_path, model_path, device):
+def train_setup(model, optimizer, csv_path, model_path, device):
     """Load checkpoint if available, return start_samples."""
     start_samples = get_last_samples(csv_path)
     if start_samples > 0:
@@ -275,18 +299,20 @@ def train_setup(config, model, optimizer, csv_path, model_path, device):
     return start_samples
 
 
-# ── Core training ────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════
+# Core training
+# ══════════════════════════════════════════════════════════════
 
-def train_one(arch, sweep_config: SweepConfig, model_prefix,
-              global_logger: GlobalLogger | None = None,
+def train_one(arch: dict, sweep_config: SweepConfig, model_prefix: str,
+              runtime: RuntimeContext,
               log_config: LoggerConfig | None = None):
-    """Train a single model given resolved architecture dict + SweepConfig.
+    """Train a single model.
 
     Args:
-        arch: resolved architecture dict from resolve_architecture()
-        sweep_config: full SweepConfig
-        model_prefix: short name for the model (e.g. 'sweep_n4')
-        global_logger: optional GlobalLogger for writing final summary
+        arch: resolved dict from resolve_architecture()
+        sweep_config: serialisable sweep config (Model + Train + Output)
+        model_prefix: short name for file naming
+        runtime: RuntimeContext with device, text, global_logger
         log_config: optional LoggerConfig for per-model TrainingLogger
 
     Returns (final_loss, status, total_samples).
@@ -301,21 +327,22 @@ def train_one(arch, sweep_config: SweepConfig, model_prefix,
     seq_len = mc.seq_len
     input_dim = seq_len * UNICODE_BITS
     bottleneck = mc.bottleneck if mc.bottleneck is not None else seq_len
-    device = sweep_config._device
-    text = sweep_config._text
-    workspace = oc.workspace
-    target_samples = tc.target_samples
-    lr = tc.lr
-    batch_size = oc.batch_size
 
-    bs = batch_size if batch_size is not None else 256
-    model_path, csv_path = save_paths(sizes, model_prefix, prefix=workspace)
+    device = runtime.device
+    text = runtime.text
+    global_logger = runtime.global_logger
+
+    ws = oc.workspace
+    target_samples = tc.target_samples
+    bs = tc.batch_size
+
+    model_path, csv_path = save_paths(sizes, model_prefix, prefix=ws)
 
     arch_str = '→'.join(str(s) for s in sizes)
     print(f'  arch: {arch_str}')
     print(f'  params: {n_params:,}  batch: {bs}')
 
-    # ── Already done? ──
+    # Already done?
     if os.path.isfile(csv_path):
         last_samples = get_last_samples(csv_path)
         if last_samples >= target_samples:
@@ -326,7 +353,6 @@ def train_one(arch, sweep_config: SweepConfig, model_prefix,
                 for row in reader:
                     last_row = row
                 if last_row:
-                    # Try to read train_loss — prefers 'train_loss' column
                     try:
                         col = header.index('train_loss')
                         val = float(last_row[col])
@@ -337,24 +363,15 @@ def train_one(arch, sweep_config: SweepConfig, model_prefix,
             print(f'  already done ({last_samples:,} samples, train={val:.6f})')
             return val, 'done', last_samples
 
-    config = PrimaryConfig(
-        seq_len=seq_len, input_dim=input_dim, hidden_dim=hidden_dim,
-        bottleneck=bottleneck, learning_rate=lr, train_ratio=tc.train_ratio,
-        batch_size=bs, device=device.type, model_name=model_prefix,
-        grad_clip=tc.grad_clip, num_workers=2 if device.type == 'cuda' else 0,
-        lr_scheduler=tc.scheduler if tc.scheduler != 'none' else '',
-        lr_warmup_epochs=tc.warmup_fraction,
-        early_stop_patience=tc.early_stop_patience,
-        cudnn_benchmark=False,
-    )
+    # ── Data ──
+    train_ds, val_ds = prepare_data(text, seq_len, tc.train_ratio)
 
-    train_ds, val_ds = prepare_data(text, config)
-
-    # ── Build model ──
+    # ── Model ──
     try:
         model = Autoencoder(
-            sizes, name=config.model_name,
-            activation=mc.activation, normalization=mc.normalization,
+            sizes,
+            activation=mc.activation,
+            normalization=mc.normalization,
             init_gain=mc.init_gain,
             norm_bottleneck=mc.norm_bottleneck,
             norm_last=mc.norm_last,
@@ -396,28 +413,27 @@ def train_one(arch, sweep_config: SweepConfig, model_prefix,
         optim_groups = model.parameters()
 
     if tc.optimizer == 'adamw_fused' and device.type == 'cuda':
-        optimizer = optim.AdamW(optim_groups, lr=lr,
+        optimizer = optim.AdamW(optim_groups, lr=tc.lr,
                                 weight_decay=tc.weight_decay, fused=True)
     elif tc.optimizer in ('adamw', 'adamw_fused'):
-        optimizer = optim.AdamW(optim_groups, lr=lr,
+        optimizer = optim.AdamW(optim_groups, lr=tc.lr,
                                 weight_decay=tc.weight_decay)
     elif tc.optimizer == 'sgd':
-        optimizer = optim.SGD(optim_groups, lr=lr,
+        optimizer = optim.SGD(optim_groups, lr=tc.lr,
                               weight_decay=tc.weight_decay, momentum=0.9)
     else:
-        optimizer = optim.AdamW(optim_groups, lr=lr,
+        optimizer = optim.AdamW(optim_groups, lr=tc.lr,
                                 weight_decay=tc.weight_decay)
 
     total_batches = int(target_samples / bs) + 1
-    start_samples = train_setup(config, model, optimizer, csv_path, model_path, device)
+    start_samples = train_setup(model, optimizer, csv_path, model_path, device)
     step_scheduler, checkpoint_scheduler = build_scheduler(
-        optimizer, config, total_batches, start_samples=start_samples)
+        optimizer, tc, total_batches, start_samples=start_samples)
     criterion = nn.BCEWithLogitsLoss()
 
-    # ── TrainingLogger — per-model CSV + stdout ──
+    # ── TrainingLogger ──
     lc = log_config or LoggerConfig()
-    train_logger = TrainingLogger(
-        csv_path, config=lc, model_name=model_prefix)
+    train_logger = TrainingLogger(csv_path, config=lc, model_name=model_prefix)
 
     rem = max(0, target_samples - start_samples)
     if rem <= 0:
@@ -430,15 +446,15 @@ def train_one(arch, sweep_config: SweepConfig, model_prefix,
         final_samples = run_training(
             start_samples, target_samples, model, optimizer, criterion,
             train_ds, val_ds, train_logger, model_path, bs,
-            seq_len, tc.grad_clip, 2,
+            seq_len, tc.grad_clip, tc.num_workers,
             step_scheduler=step_scheduler,
             checkpoint_scheduler=checkpoint_scheduler,
-            early_stop_patience=config.early_stop_patience,
+            early_stop_patience=tc.early_stop_patience,
             no_val=True)
 
         dur = time_mod.time() - t_start
 
-        # Read final result from CSV
+        # Read final train_loss from CSV
         final_train_loss = train_logger.ema_loss or 0.0
         try:
             with open(csv_path) as f:
@@ -456,19 +472,18 @@ def train_one(arch, sweep_config: SweepConfig, model_prefix,
         except Exception:
             pass
 
-        # Speed
         speed_avg = final_samples / dur if dur > 0 else 0.0
-
         print(f'  done: {final_samples:,} samples in {dur:.0f}s '
               f'({speed_avg:,.0f} sps)  train={final_train_loss:.6f}')
 
-        # ── Write to global summary ──
+        # Global summary
         if global_logger is not None:
             epoch = final_samples / len(train_ds) if len(train_ds) > 0 else 0.0
             global_logger.log_result({
                 'sweep_type': sweep_config.sweep.strategy,
                 'vary_param': sweep_config.sweep.vary,
-                'vary_value': str(sweep_config.sweep.values[0]) if len(sweep_config.sweep.values) == 1 else '',
+                'vary_value': str(sweep_config.sweep.values[0])
+                    if len(sweep_config.sweep.values) == 1 else '',
                 'seq_len': seq_len,
                 'n_hidden': arch['n'],
                 'b': f'{arch["b"]:.6g}',
@@ -506,7 +521,9 @@ def train_one(arch, sweep_config: SweepConfig, model_prefix,
         raise
 
 
-# ── GPU health check ─────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════
+# GPU health check
+# ══════════════════════════════════════════════════════════════
 
 def gpu_health_check():
     """Check GPU is usable before starting a sweep. Returns True if OK."""
