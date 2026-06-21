@@ -65,7 +65,7 @@ class SweepSpec:
 class OutputConfig:
     """Where to store results."""
     workspace: str = 'sessions/sweep'
-    sweep_log: str = 'sessions/sweep_summary.csv'
+    sweep_log: str = 'sessions/sweep_summary.csv'  # global summary CSV
     device: str = 'auto'           # auto | cuda | cpu
     batch_size: int | None = None  # None → adaptive
 

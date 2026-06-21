@@ -9,6 +9,7 @@ import signal
 import atexit
 from torch.utils.data import DataLoader
 
+
 def _cuda_safe_cleanup():
     """Sync CUDA to avoid GPU ERR — call from MAIN THREAD only.
 
@@ -22,10 +23,11 @@ def _cuda_safe_cleanup():
             pass  # context may already be broken
         torch.cuda.empty_cache()
 
-# Safety net: if the process exits without explicit cleanup,
-# atexit runs in the main thread after all non-daemon threads join.
+
 atexit.register(_cuda_safe_cleanup)
 
+
+# ── Validation ──────────────────────────────────────────────
 
 def _validate(model, val_loader, criterion, device):
     """Run validation and return average loss."""
@@ -44,23 +46,10 @@ def _validate(model, val_loader, criterion, device):
     return total_loss / total_samples if total_samples > 0 else 0.0
 
 
-def _log_checkpoint(csv_path, total_samples, total_symbols, train_loss, val_loss):
-    with open(csv_path, 'a', newline='') as f:
-        writer = csv.writer(f)
-        writer.writerow([total_samples, total_symbols, train_loss, val_loss])
-
-
-def _progress_line(total_processed, max_total, loss, speed, eta, epoch=None):
-    progress = (total_processed / max_total) * 100
-    line = f"\r\033[KProgress: {progress:.1f}% | Loss: {loss:.6f} | Speed: {speed:.0f} samples/s | ETA: {eta:.0f}s"
-    if epoch is not None:
-        line += f" | Epoch: {epoch:.2f}"
-    return line
-
+# ── Checkpoint save/load ────────────────────────────────────
 
 def _save_checkpoint(model, optimizer, model_path):
     _cuda_safe_cleanup()
-    # Always save unwrapped model state — compiled models add _orig_mod. prefix
     unwrapped = model._orig_mod if hasattr(model, '_orig_mod') else model
     torch.save(unwrapped.state_dict(), model_path)
     opt_path = model_path + ".opt"
@@ -72,6 +61,8 @@ def _load_optimizer(optimizer, model_path, device):
     if os.path.isfile(opt_path):
         optimizer.load_state_dict(torch.load(opt_path, map_location=device, weights_only=True))
 
+
+# ── Scheduler builder ───────────────────────────────────────
 
 def build_scheduler(optimizer, config, total_steps: int, start_samples: int = 0):
     """Return (per_step_scheduler, per_checkpoint_scheduler).
@@ -116,10 +107,6 @@ def build_scheduler(optimizer, config, total_steps: int, start_samples: int = 0)
         return warmup, plateau
 
     if config.lr_scheduler == "onecycle":
-        # OneCycleLR includes its own warmup phase — skip separate warmup
-        if start_samples > 0:
-            # Resume: infer completed fraction from start_samples
-            pass  # OneCycleLR handles warmup internally via pct_start
         scheduler = torch.optim.lr_scheduler.OneCycleLR(
             optimizer, max_lr=config.learning_rate,
             total_steps=total_steps, pct_start=0.3,
@@ -131,16 +118,24 @@ def build_scheduler(optimizer, config, total_steps: int, start_samples: int = 0)
     return None, None
 
 
-def run_training(start_samples, max_samples, model, optimizer, criterion,
-                 train_dataset, val_dataset, logger, model_path, batch_size,
+# ── Training loop ────────────────────────────────────────────
+
+def run_training(start_samples: int, max_samples: int, model, optimizer, criterion,
+                 train_dataset, val_dataset, train_logger, model_path, batch_size,
                  seq_len, grad_clip=1.0, num_workers=0,
                  step_scheduler=None, checkpoint_scheduler=None,
                  early_stop_patience=3, no_val=False):
+    """Main training loop.
+
+    Args:
+        train_logger: TrainingLogger instance (replaces old CSVLogger).
+    """
+    from logger import TrainingLogger
+
     os.makedirs(os.path.dirname(model_path), exist_ok=True)
     device = next(model.parameters()).device
 
-    # Register signal handlers — ONLY set a flag, never call CUDA from handler.
-    # CUDA API calls from signal context can corrupt the driver → ERR! state.
+    # ── Signal handlers — only set a flag, never call CUDA ──
     _interrupted = False
 
     def _graceful_exit(signum, frame):
@@ -178,36 +173,52 @@ def run_training(start_samples, max_samples, model, optimizer, criterion,
     best_model_path = model_path.replace('.pth', '_best.pth')
     _early_stopped = False
 
-    # Resume early-stopping state from CSV if available
-    if os.path.isfile(logger.csv_path):
+    # ── Resume early-stopping state from per-model CSV ──
+    csv_path = train_logger.csv_path
+    if os.path.isfile(csv_path):
         try:
-            with open(logger.csv_path, 'r') as f:
+            with open(csv_path, 'r') as f:
                 reader = csv.reader(f)
                 header = next(reader, None)
-                vals = []
-                for row in reader:
-                    if len(row) >= 4:
-                        vals.append((int(row[0]), float(row[3])))
-            if vals:
-                best_idx = min(range(len(vals)), key=lambda i: vals[i][1])
-                best_val_loss = vals[best_idx][1]
-                stale_checkpoints = len(vals) - 1 - best_idx
-                print(f'  Resumed early-stopping: best_val={best_val_loss:.6f} stale={stale_checkpoints}', flush=True)
+                if header and header[0] == 'total_samples':
+                    # new format: find val_loss column
+                    try:
+                        val_col = header.index('val_loss')
+                    except ValueError:
+                        val_col = None
+                    train_col = header.index('train_loss') if 'train_loss' in header else 2
+                    vals = []
+                    for row in reader:
+                        if len(row) > max(val_col or 3, train_col):
+                            sam = int(float(row[0]))
+                            v = float(row[val_col]) if val_col is not None and row[val_col] else float(row[train_col])
+                            vals.append((sam, v))
+                    if vals:
+                        best_idx = min(range(len(vals)), key=lambda i: vals[i][1])
+                        best_val_loss = vals[best_idx][1]
+                        stale_checkpoints = len(vals) - 1 - best_idx
+                        print(f'  Resumed early-stopping: best_val={best_val_loss:.6f} stale={stale_checkpoints}', flush=True)
+                elif len(header) >= 3:
+                    # old 3/4-col format
+                    vals = []
+                    for row in reader:
+                        if len(row) >= 3:
+                            sam = int(float(row[0])) if len(row) >= 4 else 0
+                            v = float(row[3]) if len(row) >= 4 else float(row[2])
+                            vals.append((sam, v))
+                    if vals:
+                        best_idx = min(range(len(vals)), key=lambda i: vals[i][1])
+                        best_val_loss = vals[best_idx][1]
+                        stale_checkpoints = len(vals) - 1 - best_idx
+                        print(f'  Resumed early-stopping: best_val={best_val_loss:.6f} stale={stale_checkpoints}', flush=True)
         except Exception:
             pass
 
-    interval_train_loss_sum = 0.0
-    interval_train_count = 0
+    sum_train_loss = 0.0
+    sum_train_count = 0
 
     next_update = total_samples_processed + UPDATE_INTERVAL
     next_log = total_samples_processed + LOG_INTERVAL
-    last_update_time = time.time()
-    last_update_samples = total_samples_processed
-
-    if not os.path.isfile(logger.csv_path):
-        with open(logger.csv_path, 'w', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(['total_samples', 'total_symbols', 'train_loss', 'val_loss'])
 
     sys.stderr.write("\r\033[K")
     sys.stderr.flush()
@@ -221,9 +232,6 @@ def run_training(start_samples, max_samples, model, optimizer, criterion,
                 if _interrupted or total_samples_processed >= max_samples:
                     break
 
-                # ── safe interruption point (no CUDA ops in flight between batches) ──
-                if _interrupted:
-                    break
                 x_batch = x_batch.to(device, non_blocking=True)
                 y_batch = y_batch.to(device, non_blocking=True)
 
@@ -251,31 +259,29 @@ def run_training(start_samples, max_samples, model, optimizer, criterion,
 
                 batch_size_actual = x_batch.size(0)
 
-                interval_train_loss_sum += loss.item() * batch_size_actual
-                interval_train_count += batch_size_actual
+                # ── Update EMA in logger ──
+                train_logger.on_batch_end(total_samples_processed + batch_size_actual,
+                                          loss.item())
+
+                sum_train_loss += loss.item() * batch_size_actual
+                sum_train_count += batch_size_actual
                 total_samples_processed += batch_size_actual
 
+                # ── Progress update (stderr, in-place) ──
                 if total_samples_processed >= next_update:
-                    current_time = time.time()
-                    time_delta = current_time - last_update_time
-                    samples_delta = total_samples_processed - last_update_samples
-                    speed = samples_delta / time_delta if time_delta > 0 else 0
-                    remaining = max_samples - total_samples_processed
-                    eta = remaining / speed if speed > 0 else 0
-                    avg_loss = interval_train_loss_sum / interval_train_count if interval_train_count > 0 else 0
-
-                    sys.stderr.write(_progress_line(total_samples_processed, max_samples, avg_loss, speed, eta, epoch=total_samples_processed / epoch_size))
+                    avg_loss = sum_train_loss / sum_train_count if sum_train_count > 0 else 0
+                    line = train_logger.format_progress(
+                        total_samples_processed, max_samples, avg_loss, epoch_size)
+                    sys.stderr.write(line)
                     sys.stderr.flush()
+                    next_update = total_samples_processed + UPDATE_INTERVAL
 
-                    next_update += UPDATE_INTERVAL
-                    last_update_time = current_time
-                    last_update_samples = total_samples_processed
-
+                # ── Checkpoint (CSV + stdout) ──
                 if total_samples_processed >= next_log:
-                    avg_train_loss = interval_train_loss_sum / interval_train_count if interval_train_count > 0 else 0
+                    avg_train_loss = sum_train_loss / sum_train_count if sum_train_count > 0 else 0
 
                     if no_val:
-                        avg_val_loss = avg_train_loss  # use train_loss as proxy
+                        avg_val_loss = avg_train_loss
                     else:
                         avg_val_loss = _validate(model, val_loader, criterion, device)
                         model.train()
@@ -291,31 +297,24 @@ def run_training(start_samples, max_samples, model, optimizer, criterion,
                         else:
                             stale_checkpoints += 1
 
-                    total_symbols_val = total_samples_processed * seq_len
-                    _log_checkpoint(logger.csv_path, total_samples_processed, total_symbols_val, avg_train_loss, avg_val_loss)
+                    # Get current LR
+                    cur_lr = optimizer.param_groups[0]['lr']
 
-                    # Clean single line to stdout
-                    timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
-                    model_tag = os.path.basename(model_path).replace('.pth', '').replace('_best', '')
-                    epoch = total_samples_processed / epoch_size
-                    tag = 'train' if no_val else 'train'
-                    line = f'{timestamp} | {model_tag} | epoch={epoch:>6.2f} | samples={total_samples_processed:>11,} | train={avg_train_loss:.6f}'
-                    if not no_val:
-                        line += f' | val={avg_val_loss:.6f}'
-                    print(line, flush=True)
+                    train_logger.log_checkpoint(
+                        total_samples_processed, avg_train_loss, epoch_size,
+                        val_loss=avg_val_loss if not no_val else None,
+                        lr=cur_lr)
 
                     if not no_val and stale_checkpoints >= early_stop_patience:
-                        print(f"  Early stop: val loss not improved for {early_stop_patience} checkpoints (best={best_val_loss:.6f})")
+                        print(f"  Early stop: val loss not improved for "
+                              f"{early_stop_patience} checkpoints "
+                              f"(best={best_val_loss:.6f})")
                         _early_stopped = True
                         break
 
-                    interval_train_loss_sum = 0.0
-                    interval_train_count = 0
-                    next_log += LOG_INTERVAL
-
-                    last_update_time = time.time()
-                    last_update_samples = total_samples_processed
-                    next_update = total_samples_processed + UPDATE_INTERVAL
+                    sum_train_loss = 0.0
+                    sum_train_count = 0
+                    next_log = total_samples_processed + LOG_INTERVAL
 
             if total_samples_processed >= max_samples:
                 break
@@ -333,24 +332,20 @@ def run_training(start_samples, max_samples, model, optimizer, criterion,
         signal.signal(signal.SIGINT, prev_sigint)
         signal.signal(signal.SIGTERM, prev_sigterm)
 
-    # Normal exit — sync before final save (at safe point)
+    # ── Normal exit ──
     _cuda_safe_cleanup()
 
-    if interval_train_count > 0:
-        avg_train_loss = interval_train_loss_sum / interval_train_count
+    if sum_train_count > 0:
+        avg_train_loss = sum_train_loss / sum_train_count
         if no_val:
             avg_val_loss = avg_train_loss
         else:
             avg_val_loss = _validate(model, val_loader, criterion, device)
-        total_symbols_val = total_samples_processed * seq_len
-        _log_checkpoint(logger.csv_path, total_samples_processed, total_symbols_val, avg_train_loss, avg_val_loss)
-        timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
-        model_tag = os.path.basename(model_path).replace('.pth', '').replace('_best', '')
-        epoch = total_samples_processed / epoch_size
-        line = f'{timestamp} | {model_tag} | epoch={epoch:>6.2f} | samples={total_samples_processed:>11,} | train={avg_train_loss:.6f}'
-        if not no_val:
-            line += f' | val={avg_val_loss:.6f}'
-        print(line, flush=True)
+        cur_lr = optimizer.param_groups[0]['lr']
+        train_logger.log_checkpoint(
+            total_samples_processed, avg_train_loss, epoch_size,
+            val_loss=avg_val_loss if not no_val else None,
+            lr=cur_lr)
 
     _save_checkpoint(model, optimizer, model_path)
     print(f"Training finished. Model saved to {model_path}")

@@ -12,19 +12,26 @@ FULL_BITS_CACHE = "data/cache/full_bits.u8"   # uint8 packed — 8 bits/byte (~0
 OLD_FLOAT_CACHE = "data/cache/full_bits.pt"   # legacy float32 (auto-migrated)
 
 
-def load_text(data_dir="data/dataset"):
+def load_text(data_dir="data/dataset", verbose=False):
     txt_files = glob.glob(os.path.join(data_dir, "*.txt"))
     texts = []
     if not txt_files:
         print(f"No .txt files found in {data_dir}, using dummy text.")
         return "Это тестовый текст для автоэнкодера. " * 50
-    print(f"Found {len(txt_files)} .txt file(s) in {data_dir}:")
+    total_chars = 0
     for path in txt_files:
-        filename = os.path.basename(path)
         with open(path, "r", encoding="utf8") as f:
             content = f.read()
             texts.append(content)
-            print(f"  - {filename}: {len(content)} characters")
+            total_chars += len(content)
+    if verbose:
+        print(f"Found {len(txt_files)} .txt file(s) in {data_dir}:")
+        for path in txt_files:
+            filename = os.path.basename(path)
+            with open(path, "r", encoding="utf8") as f:
+                print(f"  - {filename}: {len(f.read())} characters")
+    else:
+        print(f"Loaded {len(txt_files)} text files — {total_chars:,} characters total")
     return "".join(texts)
 
 

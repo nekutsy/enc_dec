@@ -9,10 +9,10 @@ import torch
 from data import load_text
 from sweep_lib import (
     resolve_architecture, train_one,
-    init_log, log_row, UNIFIED_COLUMNS,
     gpu_health_check,
 )
 from sweep_config import SweepConfig, ModelConfig, TrainingConfig, SweepSpec, OutputConfig
+from logger import GlobalLogger
 
 
 def main():
@@ -69,7 +69,8 @@ def main():
         print('GPU not available')
         return
 
-    init_log(cfg.output.sweep_log)
+    global_logger = GlobalLogger(cfg.output.sweep_log)
+    global_logger.init()
 
     arch = resolve_architecture(2, 'n', cfg)
     sizes = arch['sizes']
@@ -79,30 +80,8 @@ def main():
     print(f'Estimated time: ~5-7h at 4000-6000 samples/s')
     print()
 
-    train, status, samples = train_one(arch, cfg, 'best_160m_n2')
-
-    mc = cfg.model
-    seq_len = mc.seq_len
-    bottleneck = mc.bottleneck if mc.bottleneck is not None else seq_len
-
-    log_row(cfg.output.sweep_log, {
-        'sweep_type': 'train',
-        'vary_param': 'n',
-        'vary_value': '2',
-        'seq_len': seq_len,
-        'n_hidden': arch['n'],
-        'b': f'{arch["b"]:.6g}',
-        'hidden_dim': arch['hidden_dim'],
-        'bottleneck': bottleneck,
-        'params': arch['n_params'],
-        'batch_size': cfg.output.batch_size,
-        'total_samples': samples,
-        'total_symbols': samples * seq_len,
-        'final_train_loss': train if train is not None else '',
-        'final_val_loss': '',
-        'status': status,
-        'duration_seconds': '',
-    })
+    train, status, samples = train_one(arch, cfg, 'best_160m_n2',
+                                       global_logger=global_logger)
 
     if train is not None:
         print(f'\nDone: train_loss={train:.6f}')

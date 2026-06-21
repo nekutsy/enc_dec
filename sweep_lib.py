@@ -2,11 +2,10 @@
 
 Architecture helpers: count_params, make_rectangular, solve_b_for_n, solve_n_for_b.
 Training: train_one, compile_model, train_setup, save_paths.
-Logging: init_log, gather_done, log_row.
+Logging: GlobalLogger, TrainingLogger.
 """
 
 import os
-import csv
 import time as time_mod
 
 import torch
@@ -17,7 +16,10 @@ from configs import PrimaryConfig, UNICODE_BITS
 from model import Autoencoder
 from data import load_text, prepare_data
 from trainers import run_training, build_scheduler, _cuda_safe_cleanup, _load_optimizer
-from logger import CSVLogger, get_last_samples
+from logger import (
+    TrainingLogger, GlobalLogger, LoggerConfig, get_last_samples,
+    init_log, gather_done, log_row, UNIFIED_COLUMNS,  # backward-compat
+)
 from sweep_config import SweepConfig
 
 
@@ -44,11 +46,7 @@ def make_rectangular(input_dim, hidden_dim, bottleneck, n_hidden):
 
 
 def solve_d_for_n(n, target_params, D, B, max_d=None):
-    """Binary search d ∈ [0.1, max_d] such that count_params(make_pyramid(D,B,n,d)) ≈ target_params.
-    
-    Uses actual size list + count_params for exact match (no formula error).
-    Returns (d, h_start, actual_params).
-    """
+    """Binary search d ∈ [0.1, max_d] such that count_params(make_pyramid(D,B,n,d)) ≈ target_params."""
     if max_d is None:
         max_d = D * 10
 
@@ -71,28 +69,21 @@ def solve_d_for_n(n, target_params, D, B, max_d=None):
 
 
 def make_pyramid(input_dim, bottleneck, n_hidden, d):
-    """Build pyramid sizes: D→h1→h2→…→hn→B→hn→…→h2→h1→D
-    
-    h_i = B + d·(n−i+1)/n, so h_{n+1} would be B.
-    """
+    """Build pyramid sizes: D→h1→h2→…→hn→B→hn→…→h2→h1→D"""
     B, n = bottleneck, n_hidden
-    # Encoder side: D, h1, h2, ..., hn, B
     enc = [input_dim]
     for i in range(1, n + 1):
         enc.append(int(B + d * (n - i + 1) / n))
     enc.append(B)
-    # Decoder side (mirror, skipping D at end): hn, ..., h1, D
     dec = []
-    for i in range(n - 1, -1, -1):  # n-1, ..., 0
+    for i in range(n - 1, -1, -1):
         dec.append(int(B + d * (i + 1) / n))
     dec.append(input_dim)
     return enc + dec
 
 
 def solve_b_for_n(n_hidden, target_params, input_dim, bottleneck):
-    """Binary search b ∈ [0.1, 20] such that total params ≈ target_params.
-    Returns (b_val, hidden_dim, actual_params)."""
-
+    """Binary search b ∈ [0.1, 20] such that total params ≈ target_params."""
     def _p(b_val):
         h = max(1, int(round(input_dim * b_val)))
         return count_params(make_rectangular(input_dim, h, bottleneck, n_hidden))
@@ -112,8 +103,7 @@ def solve_b_for_n(n_hidden, target_params, input_dim, bottleneck):
 
 
 def solve_n_for_b(b_val, target_params, input_dim, bottleneck, max_n=20):
-    """Binary search n ∈ [1, max_n] such that total params ≈ target_params.
-    Returns (n, hidden_dim, actual_params)."""
+    """Binary search n ∈ [1, max_n] such that total params ≈ target_params."""
     def _p(n):
         h = max(1, int(round(input_dim * b_val)))
         return count_params(make_rectangular(input_dim, h, bottleneck, int(n)))
@@ -133,26 +123,16 @@ def solve_n_for_b(b_val, target_params, input_dim, bottleneck, max_n=20):
     return n, h, _p(n)
 
 
-
 MODEL_LEVEL_VARY = {'normalization', 'activation', 'dropout', 'norm_bottleneck', 'norm_last'}
 TRAINING_LEVEL_VARY = {'lr', 'scheduler', 'grad_clip', 'optimizer', 'weight_decay'}
 OUTPUT_LEVEL_VARY = {'batch_size'}
 
 
 def resolve_architecture(vary_value, vary_name, sweep_config: SweepConfig):
-    """Resolve full architecture given a candidate vary_value and SweepConfig.
-
-    Model-level params (normalization, activation) → set on cfg.model,
-    output-level params (batch_size) → set on cfg.output.batch_size,
-    then architecture is resolved from sweep.fixed.
-
-    Supports shape='rectangular' (default) and shape='pyramid'.
-    Returns dict: {sizes, b, n, hidden_dim, n_params}
-    """
+    """Resolve full architecture given a candidate vary_value and SweepConfig."""
     mc = sweep_config.model
     sc = sweep_config.sweep
 
-    # Params that don't affect architecture shape
     if vary_name in MODEL_LEVEL_VARY:
         setattr(mc, vary_name, vary_value)
     elif vary_name in TRAINING_LEVEL_VARY:
@@ -161,22 +141,19 @@ def resolve_architecture(vary_value, vary_name, sweep_config: SweepConfig):
         sweep_config.output.batch_size = vary_value
 
     if vary_name in MODEL_LEVEL_VARY | TRAINING_LEVEL_VARY | OUTPUT_LEVEL_VARY:
-        # Resolve architecture from fixed params (n or b)
         fixed = dict(sc.fixed)
         if 'n' in fixed:
             vary_name, vary_value = 'n', fixed['n']
         elif 'b' in fixed:
             vary_name, vary_value = 'b', fixed['b']
         else:
-            raise ValueError(
-                f'vary={vary_name} needs either n= or b= in fixed')
+            raise ValueError(f'vary={vary_name} needs either n= or b= in fixed')
 
     seq_len = mc.seq_len
     input_dim = seq_len * UNICODE_BITS
     bottleneck = mc.bottleneck if mc.bottleneck is not None else seq_len
     shape = getattr(mc, 'shape', 'rectangular')
 
-    # Build fixed dict — sweep fixed params + model-derived constants
     fixed = dict(sc.fixed)
     fixed[vary_name] = vary_value
 
@@ -199,7 +176,6 @@ def resolve_architecture(vary_value, vary_name, sweep_config: SweepConfig):
         elif sc.solve == 'n':
             raise NotImplementedError("solve=n not supported for pyramid shape")
         elif n is not None and b_val is not None:
-            # b_val interpreted as h_start/input_dim ratio
             h_start = int(input_dim * b_val)
             d = h_start - bottleneck
             sizes = make_pyramid(input_dim, bottleneck, n, d)
@@ -214,7 +190,7 @@ def resolve_architecture(vary_value, vary_name, sweep_config: SweepConfig):
         else:
             raise ValueError("Pyramid shape needs solve=b with n, or n+b fixed")
 
-    # --- rectangular (original logic) ---
+    # --- rectangular ---
     if sc.solve == 'b':
         assert n is not None, "need fixed n when solve=b"
         b_val, hidden_dim, n_params = solve_b_for_n(n, budget, input_dim, bottleneck)
@@ -277,14 +253,9 @@ def compile_model(model, device):
 # ── Checkpoint resume ────────────────────────────────────────
 
 def train_setup(config, model, optimizer, csv_path, model_path, device):
-    """Load checkpoint if available, return start_samples.
-    
-    Falls back to _best.pth if main checkpoint is missing.
-    Falls back to old single-column CSV (total_symbols only) if new format not found.
-    """
+    """Load checkpoint if available, return start_samples."""
     start_samples = get_last_samples(csv_path)
     if start_samples > 0:
-        # Fallback: _best.pth if main .pth missing
         if not os.path.isfile(model_path):
             best_path = model_path.replace('.pth', '_best.pth')
             if os.path.isfile(best_path):
@@ -304,80 +275,21 @@ def train_setup(config, model, optimizer, csv_path, model_path, device):
     return start_samples
 
 
-# ── CSV logging helpers ──────────────────────────────────────
-
-UNIFIED_COLUMNS = [
-    'sweep_type', 'vary_param', 'vary_value',
-    'seq_len', 'n_hidden', 'b', 'hidden_dim', 'bottleneck',
-    'params', 'batch_size', 'total_samples', 'total_symbols',
-    'final_train_loss', 'final_val_loss', 'status', 'duration_seconds',
-]
-
-
-def init_log(sweep_log, columns=None):
-    """Create CSV log file with header if missing."""
-    cols = columns or UNIFIED_COLUMNS
-    os.makedirs(os.path.dirname(sweep_log) or '.', exist_ok=True)
-    if not os.path.isfile(sweep_log):
-        with open(sweep_log, 'w', newline='') as f:
-            csv.writer(f).writerow(cols)
-
-
-def gather_done(sweep_log, target_samples, seq_len=None):
-    """Read completed models from unified CSV. Returns {vary_value: val_loss}.
-    
-    Uses total_samples if available (new format); falls back to total_symbols/seq_len
-    for old CSVs.
-    """
-    done = {}
-    if not os.path.isfile(sweep_log):
-        return done
-    with open(sweep_log) as f:
-        reader = csv.DictReader(f)
-        fieldnames = reader.fieldnames or []
-        has_samples = 'total_samples' in fieldnames
-        for row in reader:
-            try:
-                status = row.get('status', '')
-                val_str = row.get('final_val_loss', '') or row.get('final_train_loss', '')
-                vary_str = row.get('vary_value', '')
-
-                # Determine samples completed
-                if has_samples:
-                    sam = int(float(row.get('total_samples', 0)))
-                else:
-                    sym = int(float(row.get('total_symbols', 0)))
-                    sl = seq_len or int(float(row.get('seq_len', 32)))
-                    sam = sym // sl if sl > 0 else 0
-
-                if status == 'done' and sam >= target_samples * 0.85 and val_str and vary_str:
-                    try:
-                        vary_val = float(vary_str) if '.' in vary_str or vary_str.lstrip('-').isdigit() else vary_str
-                        if isinstance(vary_val, str):
-                            vary_val = vary_str
-                        else:
-                            vary_val = int(vary_val) if vary_val == int(vary_val) else vary_val
-                    except ValueError:
-                        vary_val = vary_str
-                    done[vary_val] = float(val_str)
-            except (ValueError, TypeError):
-                continue
-    return done
-
-
-def log_row(sweep_log, row_dict):
-    """Append a dict row to the sweep CSV."""
-    with open(sweep_log, 'a', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=UNIFIED_COLUMNS)
-        writer.writerow(row_dict)
-
-
 # ── Core training ────────────────────────────────────────────
 
-def train_one(arch, sweep_config: SweepConfig, model_prefix):
+def train_one(arch, sweep_config: SweepConfig, model_prefix,
+              global_logger: GlobalLogger | None = None,
+              log_config: LoggerConfig | None = None):
     """Train a single model given resolved architecture dict + SweepConfig.
 
-    Returns (val_loss, status, actual_samples).
+    Args:
+        arch: resolved architecture dict from resolve_architecture()
+        sweep_config: full SweepConfig
+        model_prefix: short name for the model (e.g. 'sweep_n4')
+        global_logger: optional GlobalLogger for writing final summary
+        log_config: optional LoggerConfig for per-model TrainingLogger
+
+    Returns (final_loss, status, total_samples).
     """
     mc = sweep_config.model
     tc = sweep_config.training
@@ -403,13 +315,25 @@ def train_one(arch, sweep_config: SweepConfig, model_prefix):
     print(f'  arch: {arch_str}')
     print(f'  params: {n_params:,}  batch: {bs}')
 
-    # Resume check
+    # ── Already done? ──
     if os.path.isfile(csv_path):
         last_samples = get_last_samples(csv_path)
         if last_samples >= target_samples:
             with open(csv_path) as f:
-                rows = list(csv.reader(f))
-                val = float(rows[-1][3]) if len(rows[-1]) > 3 else float(rows[-1][2])
+                reader = csv.reader(f)
+                header = next(reader)
+                last_row = None
+                for row in reader:
+                    last_row = row
+                if last_row:
+                    # Try to read train_loss — prefers 'train_loss' column
+                    try:
+                        col = header.index('train_loss')
+                        val = float(last_row[col])
+                    except (ValueError, IndexError):
+                        val = float(last_row[2]) if len(last_row) > 2 else 0.0
+                else:
+                    val = 0.0
             print(f'  already done ({last_samples:,} samples, train={val:.6f})')
             return val, 'done', last_samples
 
@@ -426,7 +350,7 @@ def train_one(arch, sweep_config: SweepConfig, model_prefix):
 
     train_ds, val_ds = prepare_data(text, config)
 
-    # Build model with configurable activation/norm/init
+    # ── Build model ──
     try:
         model = Autoencoder(
             sizes, name=config.model_name,
@@ -441,7 +365,7 @@ def train_one(arch, sweep_config: SweepConfig, model_prefix):
             raise
         print(f'  ⚠ OOM during creation')
         _cuda_safe_cleanup()
-        return None, 'oom'
+        return None, 'oom', 0
 
     try:
         model = compile_model(model, device)
@@ -453,14 +377,13 @@ def train_one(arch, sweep_config: SweepConfig, model_prefix):
         del model
         return None, 'oom', 0
 
-    # Optimizer — decay only on Linear.weight by default (BatchNorm/LayerNorm biases excluded)
+    # ── Optimizer ──
     if tc.decay_linear_only:
         decay_params = []
         no_decay_params = []
         for name, param in model.named_parameters():
             if not param.requires_grad:
                 continue
-            # weight tensors of Linear layers are 2D; biases, norm scales (1D) excluded
             if param.dim() >= 2:
                 decay_params.append(param)
             else:
@@ -490,11 +413,15 @@ def train_one(arch, sweep_config: SweepConfig, model_prefix):
     step_scheduler, checkpoint_scheduler = build_scheduler(
         optimizer, config, total_batches, start_samples=start_samples)
     criterion = nn.BCEWithLogitsLoss()
-    logger = CSVLogger(csv_path)
+
+    # ── TrainingLogger — per-model CSV + stdout ──
+    lc = log_config or LoggerConfig()
+    train_logger = TrainingLogger(
+        csv_path, config=lc, model_name=model_prefix)
 
     rem = max(0, target_samples - start_samples)
     if rem <= 0:
-        return val, 'done', start_samples
+        return 0.0, 'done', start_samples
 
     print(f'  training {rem:,} samples...')
     t_start = time_mod.time()
@@ -502,20 +429,66 @@ def train_one(arch, sweep_config: SweepConfig, model_prefix):
     try:
         final_samples = run_training(
             start_samples, target_samples, model, optimizer, criterion,
-            train_ds, val_ds, logger, model_path, bs,
+            train_ds, val_ds, train_logger, model_path, bs,
             seq_len, tc.grad_clip, 2,
             step_scheduler=step_scheduler,
             checkpoint_scheduler=checkpoint_scheduler,
             early_stop_patience=config.early_stop_patience,
             no_val=True)
 
-        with open(csv_path) as f:
-            rows = list(csv.reader(f))
-        # no_val: col 2 = train_loss, col 3 = train_loss (duplicate placeholder)
-        train = float(rows[-1][2]) if len(rows) > 1 else 0
         dur = time_mod.time() - t_start
-        print(f'  done: {final_samples:,} samples in {dur:.0f}s  train={train:.6f}')
-        return train, 'done', final_samples
+
+        # Read final result from CSV
+        final_train_loss = train_logger.ema_loss or 0.0
+        try:
+            with open(csv_path) as f:
+                reader = csv.reader(f)
+                header = next(reader)
+                last_row = None
+                for row in reader:
+                    last_row = row
+                if last_row:
+                    try:
+                        col = header.index('train_loss')
+                        final_train_loss = float(last_row[col])
+                    except (ValueError, IndexError):
+                        final_train_loss = float(last_row[2]) if len(last_row) > 2 else final_train_loss
+        except Exception:
+            pass
+
+        # Speed
+        speed_avg = final_samples / dur if dur > 0 else 0.0
+
+        print(f'  done: {final_samples:,} samples in {dur:.0f}s '
+              f'({speed_avg:,.0f} sps)  train={final_train_loss:.6f}')
+
+        # ── Write to global summary ──
+        if global_logger is not None:
+            epoch = final_samples / len(train_ds) if len(train_ds) > 0 else 0.0
+            global_logger.log_result({
+                'sweep_type': sweep_config.sweep.strategy,
+                'vary_param': sweep_config.sweep.vary,
+                'vary_value': str(sweep_config.sweep.values[0]) if len(sweep_config.sweep.values) == 1 else '',
+                'seq_len': seq_len,
+                'n_hidden': arch['n'],
+                'b': f'{arch["b"]:.6g}',
+                'hidden_dim': arch['hidden_dim'],
+                'bottleneck': bottleneck,
+                'params': n_params,
+                'batch_size': bs,
+                'total_samples': final_samples,
+                'total_symbols': final_samples * seq_len,
+                'final_train_loss': final_train_loss,
+                'final_val_loss': '',
+                'final_epoch': round(epoch, 4),
+                'train_loss_ema': train_logger.ema_loss or '',
+                'speed_avg_sps': round(speed_avg, 1),
+                'status': 'done',
+                'duration_seconds': round(dur, 1),
+            })
+
+        return final_train_loss, 'done', final_samples
+
     except torch.cuda.OutOfMemoryError:
         print(f'  ⚠ OOM')
         _cuda_safe_cleanup()
@@ -540,7 +513,7 @@ def gpu_health_check():
     if not torch.cuda.is_available():
         return True
     try:
-        result = torch.cuda.get_device_properties(0)
+        torch.cuda.get_device_properties(0)
         t = torch.zeros(1, device='cuda')
         del t
         torch.cuda.empty_cache()

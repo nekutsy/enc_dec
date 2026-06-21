@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
-"""Resume training for n=4 from 25M to 50M samples, resetting LR schedule."""
-import os, sys, signal
+"""Resume training for n=4 from checkpoint to TARGET_SAMPLES, resetting LR schedule."""
+
+import os
+import sys
+import signal
+import time
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -10,7 +15,7 @@ from configs import PrimaryConfig, UNICODE_BITS
 from model import Autoencoder
 from data import load_text, prepare_data
 from trainers import _cuda_safe_cleanup
-from logger import CSVLogger
+from logger import TrainingLogger, LoggerConfig
 
 # ── Config ───────────────────────────────────────────────────
 SEQ_LEN = 128
@@ -24,7 +29,6 @@ GRAD_CLIP = 1.0
 DEVICE = 'cuda'
 WORKSPACE = 'sessions/n_binary_160m'
 
-# Match the exact architecture from the sweep
 sizes = [2688, 4713, 4713, 4713, 4713, 128, 4713, 4713, 4713, 4713, 2688]
 model_prefix = '2688_4713_4713_4713_4713_128_sweep_n4'
 
@@ -52,6 +56,7 @@ config = PrimaryConfig(
     lr_scheduler='', early_stop_patience=3, cudnn_benchmark=False,
 )
 train_ds, val_ds = prepare_data(text, config)
+epoch_size = len(train_ds)
 
 # ── Model ────────────────────────────────────────────────────
 model = Autoencoder(sizes, init_gain=1.0).to(device)
@@ -71,8 +76,7 @@ if has_prefix:
 model.load_state_dict(state)
 print('  Model loaded')
 
-# ── Optimizer (before compile — parameter groups must match original sweep) ─
-# decay_linear_only=True: decay on params with dim >= 2 (Linear weights), skip biases/norm
+# ── Optimizer (fresh — LR reset for new epoch) ───────────────
 decay_params = []
 no_decay_params = []
 for p in model.parameters():
@@ -87,15 +91,9 @@ optim_groups = [
     {'params': no_decay_params, 'weight_decay': 0.0},
 ]
 optimizer = optim.AdamW(optim_groups, lr=LR, fused=True)
-opt_path = model_path + '.opt'
-if os.path.isfile(opt_path):
-    # Start fresh optimizer — LR is reset anyway, momentum state stale after pause
-    print('  Starting fresh optimizer (LR reset for new epoch)')
-else:
-    print('  ⚠ No optimizer checkpoint — starting fresh optimizer')
+print('  Starting fresh optimizer (LR reset)')
 
 # ── Compile after optimizer creation ─────────────────────────
-# mode="default" — no CUDA graphs to avoid ERR risk
 model = torch.compile(model, mode="default")
 unwrapped = model._orig_mod
 
@@ -105,10 +103,12 @@ start_samples = 0
 if os.path.isfile(csv_path):
     with open(csv_path) as f:
         reader = csv.reader(f)
-        header = next(reader)
+        header = next(reader, None)
+        val_col = header.index('train_loss') if header and 'train_loss' in header else 2
         for row in reader:
-            pass  # iterate to last
-        start_samples = int(row[0])
+            pass
+        if row:
+            start_samples = int(float(row[0]))
 print(f'  Resume from {start_samples:,} samples')
 
 remaining = TARGET_SAMPLES - start_samples
@@ -119,21 +119,20 @@ if remaining <= 0:
 total_steps = int(remaining / BATCH_SIZE) + 1
 print(f'  Remaining: {remaining:,} samples, ~{total_steps} steps')
 
-# ── Fresh LR schedule for remaining steps ───────────────────
-# OneCycleLR: fast warmup to max_lr, then cosine down to near-zero
-# pct_start=0.3 → 30% warmup, 70% cosine decay
+# ── Fresh LR schedule ───────────────────────────────────────
 scheduler = optim.lr_scheduler.OneCycleLR(
     optimizer, max_lr=LR, total_steps=total_steps,
     pct_start=0.3, anneal_strategy='cos',
     div_factor=25.0, final_div_factor=10000.0,
 )
-print(f'  LR schedule: OneCycleLR (max_lr={LR}, pct_start=0.3, div=25, final_div=10000)')
+print(f'  LR schedule: OneCycleLR (max_lr={LR}, pct_start=0.3)')
+
+# ── Training logger ──────────────────────────────────────────
+logger = TrainingLogger(csv_path, config=LoggerConfig.full(), model_name=model_prefix)
 
 # ── Training loop ────────────────────────────────────────────
 criterion = nn.BCEWithLogitsLoss()
-logger = CSVLogger(csv_path)
 
-# Signal handler — just set flag, no CUDA calls
 _interrupted = False
 def _on_signal(signum, frame):
     global _interrupted
@@ -146,14 +145,18 @@ loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True,
 
 model.train()
 total = start_samples
-ckpt_interval = 512  # save every 512 batches (~131k samples)
+CKPT_EVERY = 500_000  # samples between checkpoints
+next_ckpt = total + CKPT_EVERY
+interval_loss_sum = 0.0
+interval_loss_count = 0
+t_start = time.time()
 
 print(f'\nTraining {remaining:,} samples → {TARGET_SAMPLES:,} total')
 for batch_idx, batch in enumerate(loader):
     if _interrupted:
         print('\n  Interrupted — saving checkpoint...')
         torch.save(unwrapped.state_dict(), model_path)
-        torch.save(optimizer.state_dict(), opt_path)
+        torch.save(optimizer.state_dict(), opt_path := model_path + '.opt')
         _cuda_safe_cleanup()
         sys.exit(0)
 
@@ -170,28 +173,33 @@ for batch_idx, batch in enumerate(loader):
     optimizer.step()
     scheduler.step()
 
-    total += BATCH_SIZE
-    if batch_idx % 250 == 0:
-        print(f'  {total:>10,} / {TARGET_SAMPLES:,}  '
-              f'loss={loss.item():.6f}  lr={scheduler.get_last_lr()[0]:.2e}')
+    bs = inp.size(0)
+    total += bs
+    interval_loss_sum += loss.item() * bs
+    interval_loss_count += bs
+    logger.on_batch_end(total, loss.item())
 
-    if batch_idx > 0 and batch_idx % ckpt_interval == 0:
-        logger.log_row({
-            'total_samples': total, 'total_symbols': total * SEQ_LEN,
-            'train_loss': loss.item(), 'val_loss': loss.item(),
-        })
+    # ── Checkpoint log ──
+    if total >= next_ckpt:
+        avg_loss = interval_loss_sum / interval_loss_count if interval_loss_count > 0 else 0
+        cur_lr = scheduler.get_last_lr()[0]
+        logger.log_checkpoint(total, avg_loss, epoch_size, lr=cur_lr)
+
         torch.save(unwrapped.state_dict(), model_path)
-        torch.save(optimizer.state_dict(), opt_path)
+        torch.save(optimizer.state_dict(), model_path + '.opt')
+
+        interval_loss_sum = 0.0
+        interval_loss_count = 0
+        next_ckpt += CKPT_EVERY
 
     if total >= TARGET_SAMPLES:
         break
 
-# ── Final save ───────────────────────────────────────────────
+# ── Final ───────────────────────────────────────────────────
+avf_loss = interval_loss_sum / interval_loss_count if interval_loss_count > 0 else loss.item()
+logger.log_final(total, avf_loss, epoch_size,
+                 duration_seconds=time.time() - t_start)
 torch.save(unwrapped.state_dict(), model_path)
-torch.save(optimizer.state_dict(), opt_path)
-logger.log_row({
-    'total_samples': total, 'total_symbols': total * SEQ_LEN,
-    'train_loss': loss.item(), 'val_loss': loss.item(),
-})
+torch.save(optimizer.state_dict(), model_path + '.opt')
 _cuda_safe_cleanup()
-print(f'\nDone! Final loss: {loss.item():.6f} at {total:,} samples')
+print(f'\nDone! Final loss: {avf_loss:.6f} at {total:,} samples')

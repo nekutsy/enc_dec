@@ -19,10 +19,11 @@ from configs import UNICODE_BITS
 from data import load_text
 from trainers import _cuda_safe_cleanup
 from sweep_lib import (
-    resolve_architecture, train_one, init_log, gather_done, log_row,
-    gpu_health_check, UNIFIED_COLUMNS,
+    resolve_architecture, train_one,
+    gpu_health_check,
     solve_b_for_n, count_params, make_rectangular,
 )
+from logger import GlobalLogger, LoggerConfig
 from sweep_config import SweepConfig
 
 
@@ -113,8 +114,10 @@ class SweepRunner:
             return None
 
         oc = cfg.output
-        init_log(oc.sweep_log)
-        existing = gather_done(oc.sweep_log, cfg.training.target_samples, cfg.model.seq_len)
+        self.global_logger = GlobalLogger(oc.sweep_log)
+        self.global_logger.init()
+        existing = self.global_logger.get_completed(
+            cfg.training.target_samples, cfg.model.seq_len)
 
         print(f'Sweep: {cfg.name}  ({cfg.sweep.strategy} over {cfg.sweep.vary})')
         print(f'  seq_len={cfg.model.seq_len}  target={cfg.training.target_samples//1e6:.0f}M samples  '
@@ -147,32 +150,11 @@ class SweepRunner:
         if vary_name in ('normalization', 'activation', 'dropout', 'batch_size',
                          'norm_bottleneck', 'norm_last', 'init_gain'):
             prefix = f'{vary_name}_{vary_value}_sweep'
-        val, status, actual_samples = train_one(arch, cfg, prefix)
+        val, status, actual_samples = train_one(arch, cfg, prefix,
+                                                global_logger=self.global_logger)
         _cuda_safe_cleanup()
 
-        mc = cfg.model
-        seq_len = mc.seq_len
-        bottleneck = mc.bottleneck if mc.bottleneck is not None else seq_len
-
-        log_row(cfg.output.sweep_log, {
-            'sweep_type': cfg.sweep.strategy,
-            'vary_param': vary_name,
-            'vary_value': str(vary_value),
-            'seq_len': seq_len,
-            'n_hidden': arch['n'],
-            'b': f'{arch["b"]:.6g}',
-            'hidden_dim': arch['hidden_dim'],
-            'bottleneck': bottleneck,
-            'params': n_params,
-            'batch_size': cfg.output.batch_size,
-            'total_samples': actual_samples,
-            'total_symbols': actual_samples * seq_len,
-            'final_train_loss': val if val is not None else '',
-            'final_val_loss': '',
-            'status': status,
-            'duration_seconds': '',
-        })
-
+        # If train_one didn't write to global (e.g. skipped/oom), write manual fallback
         if val is not None:
             self.results[vary_value] = val
         return val, status
@@ -340,6 +322,9 @@ def _run_grid_with_binary(outer_config: SweepConfig, binary_vary, binary_range):
 
     init_log(cfg.output.sweep_log)
 
+    global_logger = GlobalLogger(cfg.output.sweep_log)
+    global_logger.init()
+
     print(f'Grid over {cfg.sweep.vary} × binary on {binary_vary}')
     print(f'  {cfg.sweep.vary} values: {cfg.sweep.values}')
     print(f'  {binary_vary} range: {binary_range}')
@@ -376,7 +361,7 @@ def _run_grid_with_binary(outer_config: SweepConfig, binary_vary, binary_range):
         print(f'{"="*60}')
 
         runner = SweepRunner(binary_cfg)
-        results = runner.run()
+        results = runner.run()  # uses same sweep_log path — all results in one CSV
         if results:
             best = min(results, key=results.get)
             all_best[outer_val] = best
