@@ -115,6 +115,19 @@ def build_scheduler(optimizer, config, total_steps: int, start_samples: int = 0)
         )
         return warmup, plateau
 
+    if config.lr_scheduler == "onecycle":
+        # OneCycleLR includes its own warmup phase — skip separate warmup
+        if start_samples > 0:
+            # Resume: infer completed fraction from start_samples
+            pass  # OneCycleLR handles warmup internally via pct_start
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            optimizer, max_lr=config.learning_rate,
+            total_steps=total_steps, pct_start=0.3,
+            anneal_strategy='cos', div_factor=25.0,
+            final_div_factor=10000.0,
+        )
+        return scheduler, None
+
     return None, None
 
 

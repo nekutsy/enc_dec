@@ -411,7 +411,7 @@ def build_parser():
     gp.add_argument('--seq-len', type=int, default=32)
     gp.add_argument('--bottleneck', type=int, default=None)
     gp.add_argument('--lr', type=float, default=0.001)
-    gp.add_argument('--scheduler', default='cosine')
+    gp.add_argument('--scheduler', default='onecycle')
     gp.add_argument('--target-samples', type=str, default='5M')
     gp.add_argument('--workspace', default='sessions/sweep')
     gp.add_argument('--sweep-log', default='sessions/sweep_summary.csv')
@@ -431,7 +431,7 @@ def build_parser():
     bp.add_argument('--seq-len', type=int, default=32)
     bp.add_argument('--bottleneck', type=int, default=None)
     bp.add_argument('--lr', type=float, default=0.001)
-    bp.add_argument('--scheduler', default='cosine')
+    bp.add_argument('--scheduler', default='onecycle')
     bp.add_argument('--target-samples', type=str, default='5M')
     bp.add_argument('--workspace', default='sessions/sweep')
     bp.add_argument('--sweep-log', default='sessions/sweep_summary.csv')
@@ -457,7 +457,7 @@ def _cli_shorthand_to_config(args, vary_values) -> SweepConfig:
         training=TrainingConfig(
             target_samples=target_samples,
             lr=getattr(args, 'lr', 0.001),
-            scheduler=getattr(args, 'scheduler', 'cosine'),
+            scheduler=getattr(args, 'scheduler', 'onecycle'),
         ),
         sweep=SweepSpec(
             strategy=args.command,

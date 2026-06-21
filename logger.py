@@ -11,6 +11,15 @@ class CSVLogger:
         self.csv_path = csv_path
         os.makedirs(os.path.dirname(csv_path), exist_ok=True)
 
+    def log_row(self, data: dict):
+        """Append a row to the CSV file."""
+        write_header = not os.path.isfile(self.csv_path)
+        with open(self.csv_path, 'a', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=['total_samples', 'total_symbols', 'train_loss', 'val_loss'])
+            if write_header:
+                writer.writeheader()
+            writer.writerow(data)
+
 
 def get_last_samples(csv_path):
     """Read total_samples from the last line of the CSV.

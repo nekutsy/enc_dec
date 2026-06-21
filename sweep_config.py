@@ -37,7 +37,7 @@ class TrainingConfig:
     target_samples: int = 5_000_000
     lr: float = 0.001
     grad_clip: float = 1.0
-    scheduler: str = 'cosine'      # cosine | plateau | none
+    scheduler: str = 'onecycle'  # onecycle | plateau | cosine | none
     warmup_fraction: float = 0.05   # fraction of total steps for warmup
     optimizer: str = 'adamw_fused'  # adamw_fused | adamw | sgd
     weight_decay: float = 0.01
