@@ -10,7 +10,8 @@ import torch.nn as nn
 from configs import UNICODE_BITS
 from model import Autoencoder
 from data import load_text, prepare_data, split_into_chunks, vec2seq, export_latent_vectors
-from trainers import run_training, _cuda_safe_cleanup
+from training import run_training, build_scheduler
+from utils import cuda_safe_cleanup
 from sweep_lib import (
     save_paths, compile_model, train_setup, setup_runtime, RuntimeContext,
 )
@@ -86,7 +87,6 @@ def main():
         num_workers=num_workers,
     )
     total_batches = int(train_cfg.target_samples / batch_size) + 1
-    from trainers import build_scheduler
     step_sch, ckpt_sch = build_scheduler(
         optimizer, train_cfg, total_batches, start_samples=start_samples)
 
@@ -104,7 +104,7 @@ def main():
     except KeyboardInterrupt:
         print('\nTraining interrupted. Checkpoint saved.')
     finally:
-        _cuda_safe_cleanup()
+        cuda_safe_cleanup()
     print('Done.')
 
 

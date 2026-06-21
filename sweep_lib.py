@@ -16,7 +16,11 @@ import torch.nn as nn
 from configs import UNICODE_BITS
 from model import Autoencoder
 from data import load_text, prepare_data
-from trainers import run_training, build_scheduler, _cuda_safe_cleanup, _load_optimizer
+from training import (
+    run_training, build_scheduler,
+    save_checkpoint, load_optimizer,
+)
+from utils import cuda_safe_cleanup, gpu_health_check
 from logger import (
     TrainingLogger, GlobalLogger, LoggerConfig, get_last_samples,
     init_log, gather_done, log_row, UNIFIED_COLUMNS,  # backward-compat
@@ -264,11 +268,14 @@ def save_paths(layer_sizes, model_name, prefix='sessions'):
 # ══════════════════════════════════════════════════════════════
 
 def compile_model(model, device):
-    """Compile model for GPU — skip for tiny models."""
+    """Compile model for GPU — skip for tiny models.
+
+    Uses mode="default" (no CUDA graphs) to avoid ERR on RTX 3070.
+    """
     if device.type == 'cuda':
         n_params = sum(p.numel() for p in model.parameters())
         if n_params > 50_000:
-            return torch.compile(model, mode='reduce-overhead')
+            return torch.compile(model, mode='default')
     return model
 
 
@@ -295,7 +302,7 @@ def train_setup(model, optimizer, csv_path, model_path, device):
         if has_prefix:
             state = {k[len('_orig_mod.'):]: v for k, v in state.items()}
         unwrapped.load_state_dict(state)
-        _load_optimizer(optimizer, model_path, device)
+        load_optimizer(optimizer, model_path, device)
     return start_samples
 
 
@@ -305,7 +312,8 @@ def train_setup(model, optimizer, csv_path, model_path, device):
 
 def train_one(arch: dict, sweep_config: SweepConfig, model_prefix: str,
               runtime: RuntimeContext,
-              log_config: LoggerConfig | None = None):
+              log_config: LoggerConfig | None = None,
+              resume_lr_reset: bool = False):
     """Train a single model.
 
     Args:
@@ -314,6 +322,8 @@ def train_one(arch: dict, sweep_config: SweepConfig, model_prefix: str,
         model_prefix: short name for file naming
         runtime: RuntimeContext with device, text, global_logger
         log_config: optional LoggerConfig for per-model TrainingLogger
+        resume_lr_reset: if True, start fresh optimizer (ignore saved state);
+            used for mid-epoch resume with new LR schedule.
 
     Returns (final_loss, status, total_samples).
     """
@@ -381,7 +391,7 @@ def train_one(arch: dict, sweep_config: SweepConfig, model_prefix: str,
         if isinstance(e, RuntimeError) and 'out of memory' not in str(e).lower():
             raise
         print(f'  ⚠ OOM during creation')
-        _cuda_safe_cleanup()
+        cuda_safe_cleanup()
         return None, 'oom', 0
 
     try:
@@ -390,7 +400,7 @@ def train_one(arch: dict, sweep_config: SweepConfig, model_prefix: str,
         if isinstance(e, RuntimeError) and 'out of memory' not in str(e).lower():
             raise
         print(f'  ⚠ OOM during compile')
-        _cuda_safe_cleanup()
+        cuda_safe_cleanup()
         del model
         return None, 'oom', 0
 
@@ -398,13 +408,13 @@ def train_one(arch: dict, sweep_config: SweepConfig, model_prefix: str,
     if tc.decay_linear_only:
         decay_params = []
         no_decay_params = []
-        for name, param in model.named_parameters():
-            if not param.requires_grad:
+        for p in model.parameters():
+            if not p.requires_grad:
                 continue
-            if param.dim() >= 2:
-                decay_params.append(param)
+            if p.dim() >= 2:
+                decay_params.append(p)
             else:
-                no_decay_params.append(param)
+                no_decay_params.append(p)
         optim_groups = [
             {'params': decay_params, 'weight_decay': tc.weight_decay},
             {'params': no_decay_params, 'weight_decay': 0.0},
@@ -427,6 +437,10 @@ def train_one(arch: dict, sweep_config: SweepConfig, model_prefix: str,
 
     total_batches = int(target_samples / bs) + 1
     start_samples = train_setup(model, optimizer, csv_path, model_path, device)
+    if resume_lr_reset:
+        print('  Starting fresh optimizer (LR reset)')
+        start_samples = get_last_samples(csv_path)  # load weights, skip opt state
+
     step_scheduler, checkpoint_scheduler = build_scheduler(
         optimizer, tc, total_batches, start_samples=start_samples)
     criterion = nn.BCEWithLogitsLoss()
@@ -506,34 +520,16 @@ def train_one(arch: dict, sweep_config: SweepConfig, model_prefix: str,
 
     except torch.cuda.OutOfMemoryError:
         print(f'  ⚠ OOM')
-        _cuda_safe_cleanup()
+        cuda_safe_cleanup()
         del model, optimizer
         return None, 'oom', 0
     except RuntimeError as e:
         if 'out of memory' in str(e).lower():
             print(f'  ⚠ OOM')
-            _cuda_safe_cleanup()
+            cuda_safe_cleanup()
             del model, optimizer
             return None, 'oom', 0
         raise
     except KeyboardInterrupt:
-        _cuda_safe_cleanup()
+        cuda_safe_cleanup()
         raise
-
-
-# ══════════════════════════════════════════════════════════════
-# GPU health check
-# ══════════════════════════════════════════════════════════════
-
-def gpu_health_check():
-    """Check GPU is usable before starting a sweep. Returns True if OK."""
-    if not torch.cuda.is_available():
-        return True
-    try:
-        torch.cuda.get_device_properties(0)
-        t = torch.zeros(1, device='cuda')
-        del t
-        torch.cuda.empty_cache()
-        return True
-    except Exception:
-        return False

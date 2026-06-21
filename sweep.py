@@ -15,7 +15,7 @@ import torch
 sys.path.insert(0, os.path.dirname(__file__))
 
 from configs import UNICODE_BITS
-from trainers import _cuda_safe_cleanup
+from utils import cuda_safe_cleanup
 from sweep_lib import (
     resolve_architecture, train_one, setup_runtime,
     gpu_health_check,
@@ -124,7 +124,7 @@ class SweepRunner:
                          'norm_bottleneck', 'norm_last', 'init_gain'):
             prefix = f'{vary_name}_{vary_value}_sweep'
         val, status, actual_samples = train_one(arch, cfg, prefix, self._runtime)
-        _cuda_safe_cleanup()
+        cuda_safe_cleanup()
 
         if val is not None:
             self.results[vary_value] = val

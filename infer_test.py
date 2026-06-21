@@ -21,7 +21,7 @@ from configs import UNICODE_BITS
 from model import Autoencoder
 from data import _build_full_bits, load_text, vec2seq, chars_to_bits, prepare_data
 import numpy as np
-from trainers import _validate
+from training import _validate
 import torch.nn as nn
 import torch.nn.functional as F
 
