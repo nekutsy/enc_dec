@@ -8,6 +8,7 @@ Commands:
   full [pos]        First 20 windows from dataset (sequential)
   enc <text>        Encode → latent (enc @pos, enc random). Stored in memory.
   dec               Decode last stored latent → text
+  dec <values>      Decode manual latent (e.g. dec 1.2 -3.4 5.6)
   z, latent         Show full stored latent vector
   <text>            Reconstruct text directly (input → model → output)
   q, quit           Exit
@@ -186,8 +187,8 @@ def _parse_chain(cmd_str):
     """Parse chain: 'dec enc random' → [('dec', ''), ('enc', 'random')].
 
     Verbs that take args ('enc', 'full') consume tokens until a structural
-    verb ('dec', 'z', 'latent') or another args-verb ('enc', 'full') is hit.
-    Verbs that don't take args ('dec', 'z', 'r', 'random') consume nothing.
+    verb ('dec', 'z', 'latent') or another args-verb is hit.
+    'dec' optionally consumes numeric tokens (manual latent input).
     """
     tokens = cmd_str.split()
     if not tokens or tokens[0].lower() not in CHAIN_VERBS:
@@ -198,7 +199,16 @@ def _parse_chain(cmd_str):
         verb = tokens[i].lower()
         i += 1
         args_parts = []
-        if verb in _ARGS_VERBS:
+        if verb == 'dec':
+            # Consume only numeric-looking tokens (manual latent values)
+            while i < len(tokens):
+                try:
+                    float(tokens[i])
+                    args_parts.append(tokens[i])
+                    i += 1
+                except ValueError:
+                    break
+        elif verb in _ARGS_VERBS:
             while i < len(tokens) and tokens[i].lower() not in _ARGS_VERBS and tokens[i].lower() not in _STRUCT_VERBS:
                 args_parts.append(tokens[i])
                 i += 1
@@ -286,8 +296,19 @@ def main(device_override=None):
               f"mean={last_latent.mean():+.4f}  std={last_latent.std():.4f}")
 
     def _cmd_dec(args_str=''):
+        nonlocal last_latent, last_latent_sl
+        if args_str:
+            # Parse space-separated numbers as latent vector
+            try:
+                vals = [float(x) for x in args_str.split()]
+                last_latent = np.array(vals, dtype=np.float32)
+                last_latent_sl = loaded_sl
+                print(f"latent set from input [{len(last_latent)} values]")
+            except ValueError:
+                print("Invalid latent values — expected numbers like: dec 1.2 -3.4 5.6")
+                return
         if last_latent is None:
-            print("No latent stored. Use 'enc <text>' first.")
+            print("No latent stored. Use 'enc <text>' first, or 'dec <values>'.")
             return
         rec = _decode_latent(loaded_model, last_latent)
         cleaned = rec.rstrip('\0')[:last_latent_sl]
@@ -443,8 +464,9 @@ def main(device_override=None):
             _cmd_enc(args_str)
             continue
 
-        if cmd.lower() == 'dec':
-            _cmd_dec()
+        if cmd.lower().startswith('dec'):
+            args_str = cmd[3:].strip() if cmd.lower().startswith('dec ') else ''
+            _cmd_dec(args_str)
             continue
 
         if cmd.lower() in ('z', 'latent'):
