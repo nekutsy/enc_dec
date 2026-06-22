@@ -271,11 +271,15 @@ def compile_model(model, device):
     """Compile model for GPU — skip for tiny models.
 
     Uses mode="default" (no CUDA graphs) to avoid ERR on RTX 3070.
+    Falls back to uncompiled on compilation errors.
     """
     if device.type == 'cuda':
         n_params = sum(p.numel() for p in model.parameters())
         if n_params > 50_000:
-            return torch.compile(model, mode='default')
+            try:
+                return torch.compile(model, mode='default')
+            except Exception as e:
+                print(f'  ⚠ torch.compile failed ({e}) — running uncompiled')
     return model
 
 
