@@ -4,13 +4,19 @@ Commands:
   <#>               Load model by number
   load <#>          Same
   val <#> <#> ...   Quick validation (no model needed)
-  random, r         Random sample from dataset
+  random, r         Random sample → reconstruct
   full [pos]        First 20 windows from dataset (sequential)
   enc <text>        Encode text → latent vector (also enc @pos)
   dec               Decode stored latent → text
   z, latent         Show full stored latent vector
   <text>            Reconstruct text (auto-pads to seq_len)
   q, quit           Exit
+
+Chaining:
+  Commands can be chained, e.g.:
+    dec enc random     — encode random sample, then decode it
+    enc random dec     — same (order reversed — reads left-to-right naturally)
+    dec enc @400000    — encode position 400k, then decode
 
 Options:
   --gpu             Use GPU (default: CPU for interactive, auto for val)
@@ -30,6 +36,8 @@ import torch.nn.functional as F
 
 # Module-level device — overridden by main()
 device = torch.device("cpu")
+
+CHAIN_VERBS = {'enc', 'dec', 'z', 'latent', 'r', 'random', 'full'}
 
 
 def _parse_key(path):
@@ -162,6 +170,42 @@ def _decode_latent(model, latent):
     return vec2seq(out_bits)
 
 
+# Verbs that accept text arguments (random/r/@pos are valid text inputs)
+_ARGS_VERBS = {'enc', 'full'}
+# Verbs that never make sense as text input → chain separators
+_STRUCT_VERBS = {'dec', 'z', 'latent'}
+
+
+def _parse_chain(cmd_str):
+    """Parse chain: 'dec enc random' → [('dec', ''), ('enc', 'random')].
+
+    Verbs that take args ('enc', 'full') consume tokens until a structural
+    verb ('dec', 'z', 'latent') or another args-verb ('enc', 'full') is hit.
+    Verbs that don't take args ('dec', 'z', 'r', 'random') consume nothing.
+    """
+    tokens = cmd_str.split()
+    if not tokens or tokens[0].lower() not in CHAIN_VERBS:
+        return None
+    sub = []
+    i = 0
+    while i < len(tokens):
+        verb = tokens[i].lower()
+        i += 1
+        args_parts = []
+        if verb in _ARGS_VERBS:
+            while i < len(tokens) and tokens[i].lower() not in _ARGS_VERBS and tokens[i].lower() not in _STRUCT_VERBS:
+                args_parts.append(tokens[i])
+                i += 1
+        sub.append((verb, ' '.join(args_parts)))
+    return sub
+
+
+def _random_chunk(text, sl, n_chars, rng):
+    """Pick a random window of sl chars from text."""
+    pos = rng.randint(0, max(0, n_chars - sl - 1))
+    return pos, text[pos:pos + sl]
+
+
 def main(device_override=None):
     global device
     if device_override is not None:
@@ -189,6 +233,7 @@ def main(device_override=None):
 
     # ── State ──
     print(f"\nCommands: <#> load | val <#> ... | random | full | enc <text> | dec | z | q")
+    print(f"Chains: dec enc random | enc random dec | enc @1000 dec | ...")
     text = load_text()
     full_bits = _build_full_bits(text)
     n_chars = full_bits.numel() // UNICODE_BITS
@@ -196,9 +241,120 @@ def main(device_override=None):
     loaded_model = None
     loaded_sl = 0
     loaded_n_params = 0
-    last_latent = None  # stored latent vector (numpy)
+    last_latent = None
     last_latent_sl = 0
     rng = random.Random()
+
+    # ── Handler callables ──
+    def _resolve_input(input_text):
+        """Resolve 'random', '@pos', or verbatim text → (display_note, chunk)."""
+        lt = input_text.lower()
+        if lt in ('random', 'r'):
+            pos, chunk = _random_chunk(text, sl, n_chars, rng)
+            return f"@random {pos}", chunk
+        if input_text.startswith('@') and input_text[1:].isdigit():
+            pos = int(input_text[1:])
+            chunk = text[pos:pos + sl]
+            return f"@pos {pos}", chunk
+        return None, input_text
+
+    def _cmd_enc(args_str):
+        nonlocal last_latent, last_latent_sl
+        if not args_str:
+            print("Usage: enc <text|random|@pos>")
+            return
+        note, chunk = _resolve_input(args_str)
+        if note:
+            if chunk:
+                print(f"{note}: {chunk[:60]!r}")
+            else:
+                print(note)
+        last_latent = _encode_text(model, chunk, sl)
+        last_latent_sl = sl
+        vals = ', '.join(f'{v:+.4f}' for v in last_latent[:16])
+        more = f' ... +{len(last_latent) - 16} more' if len(last_latent) > 16 else ''
+        print(f"latent [{len(last_latent)}]: [{vals}{more}]")
+        print(f"  range: [{last_latent.min():+.4f}, {last_latent.max():+.4f}]  "
+              f"mean={last_latent.mean():+.4f}  std={last_latent.std():.4f}")
+
+    def _cmd_dec():
+        if last_latent is None:
+            print("No latent stored. Use 'enc <text>' first.")
+            return
+        rec = _decode_latent(model, last_latent)
+        cleaned = rec.rstrip('\0')[:last_latent_sl]
+        print(cleaned)
+
+    def _cmd_z():
+        if last_latent is None:
+            print("No latent stored. Use 'enc <text>' first.")
+            return
+        print(f"latent [{len(last_latent)}]:")
+        for i in range(0, len(last_latent), 16):
+            row = last_latent[i:i+16]
+            print('  ' + ' '.join(f'{v:+.4f}' for v in row))
+
+    def _cmd_random():
+        nonlocal last_latent, last_latent_sl
+        pos, chunk = _random_chunk(text, sl, n_chars, rng)
+        print(f"@{pos}: {chunk!r}")
+        rec, errors, bit_err = _reconstruct(model, chunk, sl)
+        print(rec[:sl])
+        if errors:
+            print(f"errors: {errors}/{sl} chars | {bit_err:.1f} bits")
+        last_latent = _encode_text(model, chunk, sl)
+        last_latent_sl = sl
+
+    def _cmd_full(args_str):
+        nonlocal last_latent, last_latent_sl
+        parts = args_str.split() if args_str else []
+        start_pos = int(parts[0]) if parts and parts[0].isdigit() else 0
+        if start_pos >= n_chars:
+            print(f"Position {start_pos} beyond text end ({n_chars})")
+            return
+        n_windows = 20
+        total_err_c, total_err_b, total_c = 0, 0, 0
+        for w in range(min(n_windows, n_chars - start_pos)):
+            chunk = text[start_pos + w:start_pos + w + sl]
+            rec, errors, bit_err = _reconstruct(model, chunk, sl)
+            total_err_c += errors
+            total_err_b += bit_err
+            total_c += sl
+            indicator = f" {errors}" if errors else ""
+            print(f"@{start_pos+w}: {chunk[:40].strip()!r} → {rec[:40].strip()!r}{indicator}")
+            if w == 0:
+                last_latent = _encode_text(model, chunk, sl)
+                last_latent_sl = sl
+        print(f"total: {total_err_c}/{total_c} char errors | {total_err_b:.1f} bit errors")
+
+    def _cmd_text(inp):
+        nonlocal last_latent, last_latent_sl
+        if len(inp) > sl:
+            total_err_c, total_err_b, total_c = 0, 0, 0
+            for start in range(0, len(inp), sl):
+                chunk = inp[start:start + sl]
+                rec, errors, bit_err = _reconstruct(model, chunk, sl)
+                total_err_c += errors
+                total_err_b += bit_err
+                total_c += sl
+                print(rec.rstrip('\0'))
+            if total_err_c:
+                print(f"errors: {total_err_c}/{total_c} chars | {total_err_b:.1f} bits")
+        else:
+            rec, errors, bit_err = _reconstruct(model, inp, sl)
+            print(rec[:len(inp)])
+            if errors:
+                print(f"errors: {errors}/{sl} chars | {bit_err:.1f} bits")
+            last_latent = _encode_text(model, inp, sl)
+            last_latent_sl = sl
+
+    CHAIN_DISPATCH = {
+        'enc': _cmd_enc,
+        'dec': _cmd_dec,
+        'z': _cmd_z, 'latent': _cmd_z,
+        'r': _cmd_random, 'random': _cmd_random,
+        'full': _cmd_full,
+    }
 
     while True:
         cmd = input('> ').strip()
@@ -251,6 +407,23 @@ def main(device_override=None):
                 print(f"val={val:.6f}")
             continue
 
+        # ── Command chain (e.g. 'dec enc random' or 'enc random dec') ──
+        chain = _parse_chain(cmd)
+        if chain is not None:
+            if loaded_model is None:
+                print("No model loaded. Use '<#>' or 'load <#>' first.")
+                continue
+            # Sort producers (enc, random, full) before consumers (dec, z)
+            # so both 'dec enc random' and 'enc random dec' work identically.
+            _PRODUCER_ORDER = {'enc': 0, 'full': 0, 'r': 0, 'random': 0,
+                              'dec': 1, 'z': 1, 'latent': 1}
+            ordered = sorted(chain, key=lambda x: _PRODUCER_ORDER.get(x[0], 2))
+            for verb, args in ordered:
+                handler = CHAIN_DISPATCH.get(verb)
+                if handler:
+                    handler(args)
+            continue
+
         # ── Everything below needs a loaded model ──
         if loaded_model is None:
             print("No model loaded. Use '<#>' or 'load <#>' first.")
@@ -259,104 +432,30 @@ def main(device_override=None):
         model = loaded_model
         sl = loaded_sl
 
-        # ── Encode text to latent ──
+        # ── Single command dispatch ──
         if cmd.lower().startswith('enc'):
-            text_inp = cmd[3:].strip() if cmd.lower().startswith('enc ') else ''
-            if not text_inp:
-                print("Usage: enc <text>")
-                continue
-            # Support @pos syntax: enc @42
-            if text_inp.startswith('@') and text_inp[1:].isdigit():
-                pos = int(text_inp[1:])
-                text_inp = text[pos:pos + sl]
-                print(f"@pos {pos}: {text_inp[:60]!r}")
-            last_latent = _encode_text(model, text_inp, sl)
-            last_latent_sl = sl
-            # Print latent as rounded values (compact)
-            vals = ', '.join(f'{v:+.4f}' for v in last_latent[:16])
-            more = f' ... +{len(last_latent) - 16} more' if len(last_latent) > 16 else ''
-            print(f"latent [{len(last_latent)}]: [{vals}{more}]")
-            print(f"  range: [{last_latent.min():+.4f}, {last_latent.max():+.4f}]  "
-                  f"mean={last_latent.mean():+.4f}  std={last_latent.std():.4f}")
+            args_str = cmd[3:].strip() if cmd.lower().startswith('enc ') else ''
+            _cmd_enc(args_str)
             continue
 
-        # ── Decode stored latent → text ──
         if cmd.lower() == 'dec':
-            if last_latent is None:
-                print("No latent stored. Use 'enc <text>' first.")
-                continue
-            rec = _decode_latent(model, last_latent)
-            cleaned = rec.rstrip('\0')[:last_latent_sl]
-            print(cleaned)
+            _cmd_dec()
             continue
 
-        # ── Show stored latent ──
         if cmd.lower() in ('z', 'latent'):
-            if last_latent is None:
-                print("No latent stored. Use 'enc <text>' first.")
-                continue
-            print(f"latent [{len(last_latent)}]:")
-            for i in range(0, len(last_latent), 16):
-                row = last_latent[i:i+16]
-                print('  ' + ' '.join(f'{v:+.4f}' for v in row))
+            _cmd_z()
             continue
 
-        # ── Random sample ──
         if cmd.lower() in ('r', 'random'):
-            pos = rng.randint(0, max(0, n_chars - sl - 1))
-            chunk = text[pos:pos + sl]
-            print(f"@{pos}: {chunk!r}")
-            rec, errors, bit_err = _reconstruct(model, chunk, sl)
-            print(rec[:sl])
-            if errors:
-                print(f"errors: {errors}/{sl} chars | {bit_err:.1f} bits")
-            last_latent = _encode_text(model, chunk, sl)
-            last_latent_sl = sl
+            _cmd_random()
             continue
 
-        # ── Full sequential scan ──
         if cmd.lower().startswith('full'):
-            parts = cmd.split()
-            start_pos = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
-            if start_pos >= n_chars:
-                print(f"Position {start_pos} beyond text end ({n_chars})")
-                continue
-            n_windows = 20
-            total_err_c, total_err_b, total_c = 0, 0, 0
-            for w in range(min(n_windows, n_chars - start_pos)):
-                chunk = text[start_pos + w:start_pos + w + sl]
-                rec, errors, bit_err = _reconstruct(model, chunk, sl)
-                total_err_c += errors
-                total_err_b += bit_err
-                total_c += sl
-                indicator = f" {errors}" if errors else ""
-                print(f"@{start_pos+w}: {chunk[:40].strip()!r} → {rec[:40].strip()!r}{indicator}")
-                if w == 0:
-                    last_latent = _encode_text(model, chunk, sl)
-                    last_latent_sl = sl
-            print(f"total: {total_err_c}/{total_c} char errors | {total_err_b:.1f} bit errors")
+            _cmd_full(' '.join(cmd.split()[1:]))
             continue
 
         # ── Text reconstruction ──
-        inp = cmd
-        if len(inp) > sl:
-            total_err_c, total_err_b, total_c = 0, 0, 0
-            for start in range(0, len(inp), sl):
-                chunk = inp[start:start + sl]
-                rec, errors, bit_err = _reconstruct(model, chunk, sl)
-                total_err_c += errors
-                total_err_b += bit_err
-                total_c += sl
-                print(rec.rstrip('\0'))
-            if total_err_c:
-                print(f"errors: {total_err_c}/{total_c} chars | {total_err_b:.1f} bits")
-        else:
-            rec, errors, bit_err = _reconstruct(model, inp, sl)
-            print(rec[:len(inp)])
-            if errors:
-                print(f"errors: {errors}/{sl} chars | {bit_err:.1f} bits")
-            last_latent = _encode_text(model, inp, sl)
-            last_latent_sl = sl
+        _cmd_text(cmd)
 
     print("Done.")
 
