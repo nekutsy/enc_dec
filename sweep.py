@@ -123,7 +123,7 @@ class SweepRunner:
         if vary_name in ('normalization', 'activation', 'dropout', 'batch_size',
                          'norm_bottleneck', 'norm_last', 'init_gain'):
             prefix = f'{vary_name}_{vary_value}_sweep'
-        val, status, actual_samples = train_one(arch, cfg, prefix, self._runtime)
+        val, status, actual_samples = train_one(arch, cfg, prefix, self._runtime, no_val=True)
         cuda_safe_cleanup()
 
         if val is not None:

@@ -18,7 +18,7 @@ from model import Autoencoder
 from data import load_text, prepare_data
 from training import (
     run_training, build_scheduler,
-    save_checkpoint, load_optimizer,
+    save_checkpoint, load_optimizer, load_plat_scheduler,
 )
 from utils import cuda_safe_cleanup, gpu_health_check
 from logger import (
@@ -313,7 +313,8 @@ def train_setup(model, optimizer, csv_path, model_path, device):
 def train_one(arch: dict, sweep_config: SweepConfig, model_prefix: str,
               runtime: RuntimeContext,
               log_config: LoggerConfig | None = None,
-              resume_lr_reset: bool = False):
+              resume_lr_reset: bool = False,
+              no_val: bool = False):
     """Train a single model.
 
     Args:
@@ -443,6 +444,8 @@ def train_one(arch: dict, sweep_config: SweepConfig, model_prefix: str,
 
     step_scheduler, checkpoint_scheduler = build_scheduler(
         optimizer, tc, total_batches, start_samples=start_samples)
+    if start_samples > 0 and checkpoint_scheduler is not None:
+        load_plat_scheduler(checkpoint_scheduler, model_path)
     criterion = nn.BCEWithLogitsLoss()
 
     # ── TrainingLogger ──
@@ -464,7 +467,7 @@ def train_one(arch: dict, sweep_config: SweepConfig, model_prefix: str,
             step_scheduler=step_scheduler,
             checkpoint_scheduler=checkpoint_scheduler,
             early_stop_patience=tc.early_stop_patience,
-            no_val=True)
+            no_val=no_val)
 
         dur = time_mod.time() - t_start
 

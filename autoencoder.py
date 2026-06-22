@@ -57,7 +57,7 @@ def main():
     torch.set_float32_matmul_precision('high')
     print(f'Using device: {device}')
 
-    train_ds, val_ds = prepare_data(runtime.text, seq_len, train_ratio=0.99)
+    train_ds, val_ds = prepare_data(runtime.text, seq_len, train_ratio=0.999)
     layer_sizes = _default_layer_sizes(seq_len, hidden_dim, bottleneck)
 
     model = Autoencoder(

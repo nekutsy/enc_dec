@@ -8,17 +8,22 @@ import torch
 from utils import cuda_safe_cleanup as _cuda_safe_cleanup
 
 
-def save_checkpoint(model, optimizer, model_path: str):
+def save_checkpoint(model, optimizer, model_path: str,
+                    checkpoint_scheduler=None):
     """Save model weights + optimizer state atomically.
 
     Handles compiled models (_orig_mod unwrapping).
     Side effect: syncs CUDA before save.
+    Optionally saves ReduceLROnPlateau scheduler state.
     """
     _cuda_safe_cleanup()
     unwrapped = model._orig_mod if hasattr(model, '_orig_mod') else model
     torch.save(unwrapped.state_dict(), model_path)
     opt_path = model_path + ".opt"
     torch.save(optimizer.state_dict(), opt_path)
+    if checkpoint_scheduler is not None:
+        sch_path = model_path + ".sch"
+        torch.save(checkpoint_scheduler.state_dict(), sch_path)
 
 
 def load_optimizer(optimizer, model_path: str, device):
@@ -27,6 +32,19 @@ def load_optimizer(optimizer, model_path: str, device):
     if os.path.isfile(opt_path):
         optimizer.load_state_dict(
             torch.load(opt_path, map_location=device, weights_only=True))
+
+
+def load_plat_scheduler(checkpoint_scheduler, model_path: str):
+    """Load ReduceLROnPlateau scheduler state from model_path.sch.
+
+    Skips silently if file missing or scheduler is None.
+    """
+    if checkpoint_scheduler is None:
+        return
+    sch_path = model_path + ".sch"
+    if os.path.isfile(sch_path):
+        checkpoint_scheduler.load_state_dict(
+            torch.load(sch_path, map_location='cpu', weights_only=True))
 
 
 def resume_early_stopping_state(csv_path: str):

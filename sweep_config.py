@@ -51,7 +51,7 @@ class TrainConfig:
     weight_decay: float = 0.01
     decay_linear_only: bool = True     # True → only Linear weights; False → all params
     early_stop_patience: int = 3
-    train_ratio: float = 0.99
+    train_ratio: float = 0.999
     num_workers: int = 2               # DataLoader workers (2 for GPU, 0 for CPU)
 
 

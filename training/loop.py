@@ -64,13 +64,17 @@ def run_training(start_samples: int, max_samples: int, model, optimizer, criteri
                  train_dataset, val_dataset, train_logger, model_path, batch_size,
                  seq_len, grad_clip=1.0, num_workers=0,
                  step_scheduler=None, checkpoint_scheduler=None,
-                 early_stop_patience=3, no_val=False):
+                 early_stop_patience=3, no_val=False,
+                 val_interval: int | None = None):
     """Main training loop.
 
     Args:
         train_logger: TrainingLogger instance.
-        no_val: if True, skip validation passes and early-stopping
-                (faster but no val loss / no early-stop).
+        no_val: if True, skip validation for logging (faster CSV).
+            Plateau scheduler and early-stopping still receive val loss
+            (computed at the same checkpoints, just not persisted to CSV).
+        val_interval: samples between validation passes. Defaults to
+            250k when no_val, 500k otherwise.
     """
     os.makedirs(os.path.dirname(model_path), exist_ok=True)
     device = next(model.parameters()).device
@@ -84,15 +88,13 @@ def run_training(start_samples: int, max_samples: int, model, optimizer, criteri
         persistent_workers=(num_workers > 0),
     )
 
-    LOG_INTERVAL = 250_000 if no_val else 500_000
-    val_loader = None
-    if not no_val:
-        val_loader = DataLoader(
-            val_dataset, batch_size=batch_size, shuffle=False,
-            num_workers=num_workers,
-            pin_memory=(device.type == 'cuda'),
-            prefetch_factor=4 if num_workers > 0 else None,
-        )
+    LOG_INTERVAL = val_interval or (250_000 if no_val else 500_000)
+    val_loader = DataLoader(
+        val_dataset, batch_size=batch_size, shuffle=False,
+        num_workers=num_workers,
+        pin_memory=(device.type == 'cuda'),
+        prefetch_factor=4 if num_workers > 0 else None,
+    )
 
     scaler = torch.amp.GradScaler('cuda') if device.type == 'cuda' else None
 
@@ -151,31 +153,28 @@ def run_training(start_samples: int, max_samples: int, model, optimizer, criteri
                     # ── Checkpoint ──
                     if total_samples >= next_log:
                         avg_train_loss = sum_train_loss / sum_train_count if sum_train_count > 0 else 0
-
-                        if no_val:
-                            avg_val_loss = avg_train_loss
-                        else:
-                            avg_val_loss = _validate(model, val_loader, criterion, device)
-                            model.train()
+                        avg_val_loss = _validate(model, val_loader, criterion, device)
+                        model.train()
 
                         if checkpoint_scheduler is not None:
-                            checkpoint_scheduler.step(avg_train_loss if no_val else avg_val_loss)
+                            checkpoint_scheduler.step(avg_val_loss)
 
-                        if not no_val:
-                            if avg_val_loss < best_val_loss:
-                                best_val_loss = avg_val_loss
-                                stale_checkpoints = 0
-                                save_checkpoint(model, optimizer, best_model_path)
-                            else:
-                                stale_checkpoints += 1
+                        # Early-stopping + best model (always on val loss)
+                        if avg_val_loss < best_val_loss:
+                            best_val_loss = avg_val_loss
+                            stale_checkpoints = 0
+                            save_checkpoint(model, optimizer, best_model_path,
+                                            checkpoint_scheduler=checkpoint_scheduler)
+                        else:
+                            stale_checkpoints += 1
 
                         cur_lr = optimizer.param_groups[0]['lr']
                         train_logger.log_checkpoint(
                             total_samples, avg_train_loss, epoch_size,
-                            val_loss=avg_val_loss if not no_val else None,
+                            val_loss=None if no_val else avg_val_loss,
                             lr=cur_lr)
 
-                        if not no_val and stale_checkpoints >= early_stop_patience:
+                        if stale_checkpoints >= early_stop_patience:
                             print(f"  Early stop: val loss not improved for "
                                   f"{early_stop_patience} checkpoints "
                                   f"(best={best_val_loss:.6f})")
@@ -192,7 +191,8 @@ def run_training(start_samples: int, max_samples: int, model, optimizer, criteri
         print("\nTraining interrupted. Cleaning up GPU...", file=sys.stderr, flush=True)
         _cuda_safe_cleanup()
         print("Saving checkpoint...", file=sys.stderr, flush=True)
-        save_checkpoint(model, optimizer, model_path)
+        save_checkpoint(model, optimizer, model_path,
+                        checkpoint_scheduler=checkpoint_scheduler)
         raise
 
     # ── Normal exit ──
@@ -200,16 +200,14 @@ def run_training(start_samples: int, max_samples: int, model, optimizer, criteri
 
     if sum_train_count > 0:
         avg_train_loss = sum_train_loss / sum_train_count
-        if no_val:
-            avg_val_loss = avg_train_loss
-        else:
-            avg_val_loss = _validate(model, val_loader, criterion, device)
+        avg_val_loss = _validate(model, val_loader, criterion, device)
         cur_lr = optimizer.param_groups[0]['lr']
         train_logger.log_checkpoint(
             total_samples, avg_train_loss, epoch_size,
-            val_loss=avg_val_loss if not no_val else None,
+            val_loss=None if no_val else avg_val_loss,
             lr=cur_lr)
 
-    save_checkpoint(model, optimizer, model_path)
+    save_checkpoint(model, optimizer, model_path,
+                    checkpoint_scheduler=checkpoint_scheduler)
     print(f"Training finished. Model saved to {model_path}")
     return total_samples

@@ -54,7 +54,8 @@ def _build_plateau(optimizer, warmup_steps):
         optimizer, start_factor=0.1, total_iters=warmup_steps
     ) if warmup_steps > 0 else None
     plateau = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', factor=0.5, patience=5
+        optimizer, mode='min', factor=0.7, patience=5,
+        min_lr=1e-6,
     )
     return warmup, plateau
 
