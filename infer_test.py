@@ -278,7 +278,7 @@ def main(device_override=None):
         print(f"  range: [{last_latent.min():+.4f}, {last_latent.max():+.4f}]  "
               f"mean={last_latent.mean():+.4f}  std={last_latent.std():.4f}")
 
-    def _cmd_dec():
+    def _cmd_dec(args_str=''):
         if last_latent is None:
             print("No latent stored. Use 'enc <text>' first.")
             return
@@ -286,7 +286,7 @@ def main(device_override=None):
         cleaned = rec.rstrip('\0')[:last_latent_sl]
         print(cleaned)
 
-    def _cmd_z():
+    def _cmd_z(args_str=''):
         if last_latent is None:
             print("No latent stored. Use 'enc <text>' first.")
             return
@@ -295,7 +295,7 @@ def main(device_override=None):
             row = last_latent[i:i+16]
             print('  ' + ' '.join(f'{v:+.4f}' for v in row))
 
-    def _cmd_random():
+    def _cmd_random(args_str=''):
         nonlocal last_latent, last_latent_sl
         pos, chunk = _random_chunk(text, loaded_sl, n_chars, rng)
         print(f"@{pos}: {chunk!r}")
