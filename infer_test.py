@@ -6,6 +6,9 @@ Commands:
   val <#> <#> ...   Quick validation (no model needed)
   random, r         Random sample from dataset
   full [pos]        First 20 windows from dataset (sequential)
+  enc <text>        Encode text → latent vector (also enc @pos)
+  dec               Decode stored latent → text
+  z, latent         Show full stored latent vector
   <text>            Reconstruct text (auto-pads to seq_len)
   q, quit           Exit
 
@@ -121,19 +124,42 @@ def _compute_val_loss(model, text, seq_len):
     return _validate(model, val_loader, criterion, device)
 
 
-def _reconstruct(model, chunk, sl):
-    """Reconstruct a single window of size sl. Pads with \\0 if needed."""
+def _bits_from_chunk(chunk, sl):
+    """Pad to sl and convert to bit tensor [1, sl*21]."""
     padded = chunk + '\0' * (sl - len(chunk))
     codes = np.array([ord(ch) if ch != '\0' else 0 for ch in padded], dtype=np.uint32)
     bits_np = chars_to_bits(codes).ravel()
-    inp_t = torch.from_numpy(bits_np).float().unsqueeze(0).to(device)
+    return torch.from_numpy(bits_np).float().unsqueeze(0).to(device), padded
+
+
+def _reconstruct(model, chunk, sl):
+    """Reconstruct a single window of size sl. Pads with \\0 if needed."""
+    inp_t, padded = _bits_from_chunk(chunk, sl)
     with torch.inference_mode():
-        out = model(inp_t).squeeze(0).cpu().numpy()
-    out = torch.sigmoid(torch.from_numpy(out)).numpy()
-    rec = vec2seq(out)
+        out_logits = model(inp_t).squeeze(0).cpu().numpy()
+    out_bits = torch.sigmoid(torch.from_numpy(out_logits)).numpy()
+    rec = vec2seq(out_bits)
     errors = sum(1 for a, b in zip(padded, rec) if a != b)
-    bit_err = np.abs(bits_np - out).sum()
+    codes = np.array([ord(ch) if ch != '\0' else 0 for ch in padded], dtype=np.uint32)
+    bit_err = np.abs(chars_to_bits(codes).ravel() - out_bits).sum()
     return rec, errors, bit_err
+
+
+def _encode_text(model, chunk, sl):
+    """Encode text chunk → latent vector (numpy)."""
+    inp_t, _ = _bits_from_chunk(chunk, sl)
+    with torch.inference_mode():
+        latent = model.encode(inp_t).squeeze(0).cpu().numpy()
+    return latent
+
+
+def _decode_latent(model, latent):
+    """Decode latent vector → reconstructed text."""
+    z = torch.from_numpy(latent).float().unsqueeze(0).to(device)
+    with torch.inference_mode():
+        out_logits = model.decode(z).squeeze(0).cpu().numpy()
+    out_bits = torch.sigmoid(torch.from_numpy(out_logits)).numpy()
+    return vec2seq(out_bits)
 
 
 def main(device_override=None):
@@ -162,7 +188,7 @@ def main(device_override=None):
         print(f"{i:>3}  {n_params:>12,}  {seq_len:>8}  {n_hidden:>8}  {folder:>25}  {fname[:60]}")
 
     # ── State ──
-    print(f"\nCommands: <#> load model | 'val <#> <#> ...' | 'random' | 'full' | 'q' quit")
+    print(f"\nCommands: <#> load | val <#> ... | random | full | enc <text> | dec | z | q")
     text = load_text()
     full_bits = _build_full_bits(text)
     n_chars = full_bits.numel() // UNICODE_BITS
@@ -170,6 +196,8 @@ def main(device_override=None):
     loaded_model = None
     loaded_sl = 0
     loaded_n_params = 0
+    last_latent = None  # stored latent vector (numpy)
+    last_latent_sl = 0
     rng = random.Random()
 
     while True:
@@ -231,6 +259,48 @@ def main(device_override=None):
         model = loaded_model
         sl = loaded_sl
 
+        # ── Encode text to latent ──
+        if cmd.lower().startswith('enc'):
+            text_inp = cmd[3:].strip() if cmd.lower().startswith('enc ') else ''
+            if not text_inp:
+                print("Usage: enc <text>")
+                continue
+            # Support @pos syntax: enc @42
+            if text_inp.startswith('@') and text_inp[1:].isdigit():
+                pos = int(text_inp[1:])
+                text_inp = text[pos:pos + sl]
+                print(f"@pos {pos}: {text_inp[:60]!r}")
+            last_latent = _encode_text(model, text_inp, sl)
+            last_latent_sl = sl
+            # Print latent as rounded values (compact)
+            vals = ', '.join(f'{v:+.4f}' for v in last_latent[:16])
+            more = f' ... +{len(last_latent) - 16} more' if len(last_latent) > 16 else ''
+            print(f"latent [{len(last_latent)}]: [{vals}{more}]")
+            print(f"  range: [{last_latent.min():+.4f}, {last_latent.max():+.4f}]  "
+                  f"mean={last_latent.mean():+.4f}  std={last_latent.std():.4f}")
+            continue
+
+        # ── Decode stored latent → text ──
+        if cmd.lower() == 'dec':
+            if last_latent is None:
+                print("No latent stored. Use 'enc <text>' first.")
+                continue
+            rec = _decode_latent(model, last_latent)
+            cleaned = rec.rstrip('\0')[:last_latent_sl]
+            print(cleaned)
+            continue
+
+        # ── Show stored latent ──
+        if cmd.lower() in ('z', 'latent'):
+            if last_latent is None:
+                print("No latent stored. Use 'enc <text>' first.")
+                continue
+            print(f"latent [{len(last_latent)}]:")
+            for i in range(0, len(last_latent), 16):
+                row = last_latent[i:i+16]
+                print('  ' + ' '.join(f'{v:+.4f}' for v in row))
+            continue
+
         # ── Random sample ──
         if cmd.lower() in ('r', 'random'):
             pos = rng.randint(0, max(0, n_chars - sl - 1))
@@ -240,6 +310,8 @@ def main(device_override=None):
             print(rec[:sl])
             if errors:
                 print(f"errors: {errors}/{sl} chars | {bit_err:.1f} bits")
+            last_latent = _encode_text(model, chunk, sl)
+            last_latent_sl = sl
             continue
 
         # ── Full sequential scan ──
@@ -259,6 +331,9 @@ def main(device_override=None):
                 total_c += sl
                 indicator = f" {errors}" if errors else ""
                 print(f"@{start_pos+w}: {chunk[:40].strip()!r} → {rec[:40].strip()!r}{indicator}")
+                if w == 0:
+                    last_latent = _encode_text(model, chunk, sl)
+                    last_latent_sl = sl
             print(f"total: {total_err_c}/{total_c} char errors | {total_err_b:.1f} bit errors")
             continue
 
@@ -280,6 +355,8 @@ def main(device_override=None):
             print(rec[:len(inp)])
             if errors:
                 print(f"errors: {errors}/{sl} chars | {bit_err:.1f} bits")
+            last_latent = _encode_text(model, inp, sl)
+            last_latent_sl = sl
 
     print("Done.")
 
