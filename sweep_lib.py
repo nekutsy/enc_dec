@@ -271,16 +271,22 @@ def compile_model(model, device):
     """Compile model for GPU — skip for tiny models.
 
     Uses mode="default" (no CUDA graphs) to avoid ERR on RTX 3070.
-    Falls back to uncompiled on compilation errors.
+    Skipped when BatchNorm is present — known fake-tensor device propagation
+    bug on CUDA 13.x drivers.
     """
-    if device.type == 'cuda':
-        n_params = sum(p.numel() for p in model.parameters())
-        if n_params > 50_000:
-            try:
-                return torch.compile(model, mode='default')
-            except Exception as e:
-                print(f'  ⚠ torch.compile failed ({e}) — running uncompiled')
-    return model
+    if device.type != 'cuda':
+        return model
+    n_params = sum(p.numel() for p in model.parameters())
+    if n_params <= 50_000:
+        return model
+    has_bn = any(isinstance(m, torch.nn.BatchNorm1d) for m in model.modules())
+    if has_bn:
+        return model
+    try:
+        return torch.compile(model, mode='default')
+    except Exception as e:
+        print(f'  ⚠ torch.compile failed ({e}) — running uncompiled')
+        return model
 
 
 # ══════════════════════════════════════════════════════════════
