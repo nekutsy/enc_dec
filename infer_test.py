@@ -250,11 +250,11 @@ def main(device_override=None):
         """Resolve 'random', '@pos', or verbatim text → (display_note, chunk)."""
         lt = input_text.lower()
         if lt in ('random', 'r'):
-            pos, chunk = _random_chunk(text, sl, n_chars, rng)
+            pos, chunk = _random_chunk(text, loaded_sl, n_chars, rng)
             return f"@random {pos}", chunk
         if input_text.startswith('@') and input_text[1:].isdigit():
             pos = int(input_text[1:])
-            chunk = text[pos:pos + sl]
+            chunk = text[pos:pos + loaded_sl]
             return f"@pos {pos}", chunk
         return None, input_text
 
@@ -269,8 +269,8 @@ def main(device_override=None):
                 print(f"{note}: {chunk[:60]!r}")
             else:
                 print(note)
-        last_latent = _encode_text(model, chunk, sl)
-        last_latent_sl = sl
+        last_latent = _encode_text(loaded_model, chunk, loaded_sl)
+        last_latent_sl = loaded_sl
         print(f"latent [{len(last_latent)}]:")
         for i in range(0, len(last_latent), 16):
             row = last_latent[i:i+16]
@@ -282,7 +282,7 @@ def main(device_override=None):
         if last_latent is None:
             print("No latent stored. Use 'enc <text>' first.")
             return
-        rec = _decode_latent(model, last_latent)
+        rec = _decode_latent(loaded_model, last_latent)
         cleaned = rec.rstrip('\0')[:last_latent_sl]
         print(cleaned)
 
@@ -297,14 +297,14 @@ def main(device_override=None):
 
     def _cmd_random():
         nonlocal last_latent, last_latent_sl
-        pos, chunk = _random_chunk(text, sl, n_chars, rng)
+        pos, chunk = _random_chunk(text, loaded_sl, n_chars, rng)
         print(f"@{pos}: {chunk!r}")
-        rec, errors, bit_err = _reconstruct(model, chunk, sl)
-        print(rec[:sl])
+        rec, errors, bit_err = _reconstruct(loaded_model, chunk, loaded_sl)
+        print(rec[:loaded_sl])
         if errors:
-            print(f"errors: {errors}/{sl} chars | {bit_err:.1f} bits")
-        last_latent = _encode_text(model, chunk, sl)
-        last_latent_sl = sl
+            print(f"errors: {errors}/{loaded_sl} chars | {bit_err:.1f} bits")
+        last_latent = _encode_text(loaded_model, chunk, loaded_sl)
+        last_latent_sl = loaded_sl
 
     def _cmd_full(args_str):
         nonlocal last_latent, last_latent_sl
@@ -316,38 +316,38 @@ def main(device_override=None):
         n_windows = 20
         total_err_c, total_err_b, total_c = 0, 0, 0
         for w in range(min(n_windows, n_chars - start_pos)):
-            chunk = text[start_pos + w:start_pos + w + sl]
-            rec, errors, bit_err = _reconstruct(model, chunk, sl)
+            chunk = text[start_pos + w:start_pos + w + loaded_sl]
+            rec, errors, bit_err = _reconstruct(loaded_model, chunk, loaded_sl)
             total_err_c += errors
             total_err_b += bit_err
-            total_c += sl
+            total_c += loaded_sl
             indicator = f" {errors}" if errors else ""
             print(f"@{start_pos+w}: {chunk[:40].strip()!r} → {rec[:40].strip()!r}{indicator}")
             if w == 0:
-                last_latent = _encode_text(model, chunk, sl)
-                last_latent_sl = sl
+                last_latent = _encode_text(loaded_model, chunk, loaded_sl)
+                last_latent_sl = loaded_sl
         print(f"total: {total_err_c}/{total_c} char errors | {total_err_b:.1f} bit errors")
 
     def _cmd_text(inp):
         nonlocal last_latent, last_latent_sl
-        if len(inp) > sl:
+        if len(inp) > loaded_sl:
             total_err_c, total_err_b, total_c = 0, 0, 0
-            for start in range(0, len(inp), sl):
-                chunk = inp[start:start + sl]
-                rec, errors, bit_err = _reconstruct(model, chunk, sl)
+            for start in range(0, len(inp), loaded_sl):
+                chunk = inp[start:start + loaded_sl]
+                rec, errors, bit_err = _reconstruct(loaded_model, chunk, loaded_sl)
                 total_err_c += errors
                 total_err_b += bit_err
-                total_c += sl
+                total_c += loaded_sl
                 print(rec.rstrip('\0'))
             if total_err_c:
                 print(f"errors: {total_err_c}/{total_c} chars | {total_err_b:.1f} bits")
         else:
-            rec, errors, bit_err = _reconstruct(model, inp, sl)
+            rec, errors, bit_err = _reconstruct(loaded_model, inp, loaded_sl)
             print(rec[:len(inp)])
             if errors:
-                print(f"errors: {errors}/{sl} chars | {bit_err:.1f} bits")
-            last_latent = _encode_text(model, inp, sl)
-            last_latent_sl = sl
+                print(f"errors: {errors}/{loaded_sl} chars | {bit_err:.1f} bits")
+            last_latent = _encode_text(loaded_model, inp, loaded_sl)
+            last_latent_sl = loaded_sl
 
     CHAIN_DISPATCH = {
         'enc': _cmd_enc,
@@ -429,9 +429,6 @@ def main(device_override=None):
         if loaded_model is None:
             print("No model loaded. Use '<#>' or 'load <#>' first.")
             continue
-
-        model = loaded_model
-        sl = loaded_sl
 
         # ── Single command dispatch ──
         if cmd.lower().startswith('enc'):
