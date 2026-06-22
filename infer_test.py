@@ -4,13 +4,19 @@ Commands:
   <#>               Load model by number
   load <#>          Same
   val <#> <#> ...   Quick validation (no model needed)
-  random, r         Random sample → reconstruct
+  random, r         Random sample → reconstruct & store latent
   full [pos]        First 20 windows from dataset (sequential)
-  enc <text>        Encode text → latent vector (also enc @pos)
-  dec               Decode stored latent → text
+  enc <text>        Encode → latent (enc @pos, enc random). Stored in memory.
+  dec               Decode last stored latent → text
   z, latent         Show full stored latent vector
-  <text>            Reconstruct text (auto-pads to seq_len)
+  <text>            Reconstruct text directly (input → model → output)
   q, quit           Exit
+
+  Typical flow:
+    enc Hello world  → stores latent, prints it
+    dec              → decodes that latent back to text
+    enc random dec   → encode random sample and decode in one line
+    Hello world      → direct reconstruction without latent step
 
 Chaining:
   Commands can be chained, e.g.:
@@ -232,8 +238,9 @@ def main(device_override=None):
         print(f"{i:>3}  {n_params:>12,}  {seq_len:>8}  {n_hidden:>8}  {folder:>25}  {fname[:60]}")
 
     # ── State ──
-    print(f"\nCommands: <#> load | val <#> ... | random | full | enc <text> | dec | z | q")
-    print(f"Chains: dec enc random | enc random dec | enc @1000 dec | ...")
+    print(f"\nEnc: enc <text|random|@pos> | Dec: dec | Show latent: z")
+    print(f"Direct: <text> | Random: r | Full: full [pos] | Quit: q")
+    print(f"Chains: dec enc random | enc random dec | ...")
     text = load_text()
     full_bits = _build_full_bits(text)
     n_chars = full_bits.numel() // UNICODE_BITS
@@ -343,7 +350,7 @@ def main(device_override=None):
                 print(f"errors: {total_err_c}/{total_c} chars | {total_err_b:.1f} bits")
         else:
             rec, errors, bit_err = _reconstruct(loaded_model, inp, loaded_sl)
-            print(rec[:len(inp)])
+            print(rec.rstrip('\0'))
             if errors:
                 print(f"errors: {errors}/{loaded_sl} chars | {bit_err:.1f} bits")
             last_latent = _encode_text(loaded_model, inp, loaded_sl)
