@@ -266,7 +266,7 @@ def main(device_override=None):
         note, chunk = _resolve_input(args_str)
         if note:
             if chunk:
-                print(f"{note}: {chunk[:60]!r}")
+                print(f"{note}: {chunk!r}")
             else:
                 print(note)
         last_latent = _encode_text(loaded_model, chunk, loaded_sl)
