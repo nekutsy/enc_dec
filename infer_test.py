@@ -271,9 +271,10 @@ def main(device_override=None):
                 print(note)
         last_latent = _encode_text(model, chunk, sl)
         last_latent_sl = sl
-        vals = ', '.join(f'{v:+.4f}' for v in last_latent[:16])
-        more = f' ... +{len(last_latent) - 16} more' if len(last_latent) > 16 else ''
-        print(f"latent [{len(last_latent)}]: [{vals}{more}]")
+        print(f"latent [{len(last_latent)}]:")
+        for i in range(0, len(last_latent), 16):
+            row = last_latent[i:i+16]
+            print('  ' + ' '.join(f'{v:+.4f}' for v in row))
         print(f"  range: [{last_latent.min():+.4f}, {last_latent.max():+.4f}]  "
               f"mean={last_latent.mean():+.4f}  std={last_latent.std():.4f}")
 
