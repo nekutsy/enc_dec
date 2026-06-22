@@ -21,8 +21,8 @@ def _validate(model, val_loader, criterion, device):
     total_samples = 0
     with torch.inference_mode():
         for x_batch, y_batch in val_loader:
-            x_batch = x_batch.to(device, non_blocking=True)
-            y_batch = y_batch.to(device, non_blocking=True)
+            x_batch = x_batch.to(device)
+            y_batch = y_batch.to(device)
             out = model(x_batch)
             loss = criterion(out, y_batch)
             n = x_batch.size(0)
@@ -127,6 +127,8 @@ def run_training(start_samples: int, max_samples: int, model, optimizer, criteri
                     if interrupt.interrupted or total_samples >= max_samples:
                         break
 
+                    x_batch = x_batch.to(device, non_blocking=True)
+                    y_batch = y_batch.to(device, non_blocking=True)
                     bs = x_batch.size(0)
 
                     optimizer.zero_grad(set_to_none=True)
