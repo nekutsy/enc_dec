@@ -56,7 +56,7 @@ class TrainConfig:
     greedy_probe_factor: float = 0.5     # greedy: LR multiplier on probe
     greedy_probe_threshold: float = 0.02  # greedy: |δ| below this is \"flat\"
     greedy_probe_lock: int = 3           # greedy: probe observation window
-    greedy_cooldown: int = 9             # greedy: cooldown after failed probe
+    greedy_cooldown: int = 3             # greedy: cooldown after failed probe
     optimizer: str = 'adamw_fused'     # adamw_fused | adamw | sgd | nag | lion | sophia
     weight_decay: float = 0.01
     decay_linear_only: bool = True     # True → only Linear weights; False → all params

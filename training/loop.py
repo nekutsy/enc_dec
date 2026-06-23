@@ -109,6 +109,10 @@ def run_training(start_samples: int, max_samples: int, model, optimizer, criteri
 
     # ── Resume early-stopping counters ──
     best_val_loss, stale_checkpoints = resume_early_stopping_state(train_logger.csv_path)
+    # Cap stale on resume — model behaviour shifts after restart
+    if stale_checkpoints > 3:
+        print(f'  Capping stale from {stale_checkpoints} to 3 (post-resume reset)', flush=True)
+        stale_checkpoints = 3
 
     sum_train_loss = 0.0
     sum_train_count = 0
@@ -167,6 +171,9 @@ def run_training(start_samples: int, max_samples: int, model, optimizer, criteri
                             stale_checkpoints = 0
                             save_checkpoint(model, optimizer, best_model_path,
                                             checkpoint_scheduler=checkpoint_scheduler)
+                        elif checkpoint_scheduler is not None and hasattr(checkpoint_scheduler, 'is_exploring') and checkpoint_scheduler.is_exploring():
+                            # Don't count probe/cooldown checkpoints as stale
+                            pass
                         else:
                             stale_checkpoints += 1
 

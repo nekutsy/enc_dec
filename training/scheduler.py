@@ -34,7 +34,7 @@ class GreedyLR:
     def __init__(self, optimizer, factor=0.5, beta=0.9, lock_steps=3,
                  probe_patience=3, probe_factor=0.5, probe_lock_steps=3,
                  probe_threshold=0.02,
-                 cooldown_steps=9,
+                 cooldown_steps=3,
                  min_lr=1e-7, max_lr=0.1):
         self.optimizer = optimizer
         self.factor = factor            # γ: controls adjustment aggressiveness
@@ -126,10 +126,15 @@ class GreedyLR:
         for pg in self.optimizer.param_groups:
             pg['lr'] = probe_lr
 
+    def is_exploring(self):
+        """True during probe or cooldown — early-stop should not count these."""
+        return self._phase != 'normal'
+
     def _evaluate_probe(self):
         old_lr, old_ema, old_prev_ema, best_probe = self._probe_backup
         self._probe_backup = None
-        if best_probe < float('inf') and self._ema < old_ema:
+        # Compare best probe val against pre-probe EMA — robust to noise
+        if best_probe < float('inf') and best_probe < old_ema:
             # Probe helped — keep lower LR, reset from improved state
             self._ema = old_ema  # keep continuity with pre-probe EMA
             self._prev_ema = self._ema
@@ -142,7 +147,7 @@ class GreedyLR:
             self._ema = old_ema
             self._prev_ema = old_prev_ema
             self._phase = 'cooldown'
-            self._phase_steps = self.cooldown_steps
+            self._phase_steps = min(self.cooldown_steps, 3)
 
     def state_dict(self):
         return {
@@ -173,7 +178,7 @@ def build_scheduler(optimizer, train_config, total_steps: int, start_samples: in
                      lock_steps: int = 3,
                      probe_patience: int = 3, probe_factor: float = 0.5,
                      probe_threshold: float = 0.02,
-                     probe_lock_steps: int = 3, cooldown_steps: int = 9):
+                     probe_lock_steps: int = 3, cooldown_steps: int = 3):
     """Build (per_step_scheduler, per_checkpoint_scheduler) from TrainConfig.
 
     per_step_scheduler: called every batch (warmup, cosine, onecycle).
