@@ -610,6 +610,8 @@ def train_one(arch: dict, sweep_config: SweepConfig, model_prefix: str,
     print(f'  training {rem:,} samples...')
     t_start = time_mod.time()
 
+    train_done = None  # result tuple or None
+
     try:
         final_samples = run_training(
             start_samples, target_samples, model, optimizer, criterion,
@@ -670,20 +672,24 @@ def train_one(arch: dict, sweep_config: SweepConfig, model_prefix: str,
                 'duration_seconds': round(dur, 1),
             })
 
-        return final_train_loss, 'done', final_samples
+        train_done = (final_train_loss, 'done', final_samples)
 
     except torch.cuda.OutOfMemoryError:
         print(f'  ⚠ OOM')
-        cuda_safe_cleanup()
-        del model, optimizer
-        return None, 'oom', 0
+        train_done = (None, 'oom', 0)
     except RuntimeError as e:
         if 'out of memory' in str(e).lower():
             print(f'  ⚠ OOM')
-            cuda_safe_cleanup()
-            del model, optimizer
-            return None, 'oom', 0
-        raise
-    except KeyboardInterrupt:
+            train_done = (None, 'oom', 0)
+        else:
+            raise
+
+    finally:
+        # Always release GPU memory before returning
+        del model
+        del optimizer
         cuda_safe_cleanup()
-        raise
+
+    if train_done is None:
+        raise RuntimeError('unreachable: train_done was not set')
+    return train_done
