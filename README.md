@@ -13,11 +13,12 @@
 ### Autoencoder (`model.py`)
 
 Симметричный полносвязный автоэнкодер с настраиваемыми:
-- **Глубина** — задаётся массивом `layer_sizes`, середина массива = bottleneck
+- **Глубина** — задаётся массивом `layer_sizes`, середина = bottleneck
+- **Форма** — rectangular (все скрытые слои одной ширины) или pyramid (сужающаяся к центру)
 - **Активация** — `silu` (по умолчанию), `relu`, `gelu`, `leaky_relu`
-- **Нормализация** — `batchnorm` (BatchNorm1d), `layernorm`, либо без
-- **Инициализация** — orthogonal, gain=0.5
-- **Dropout** — опциональный слой после каждой activation
+- **Нормализация** — `batchnorm` (BatchNorm1d), `layernorm`, либо `none`
+- **Инициализация** — orthogonal, настраиваемый gain
+- **Dropout** — опциональный
 
 Каждый скрытый слой: `Linear → Norm → Activation → Dropout(опционально)`.
 
@@ -28,27 +29,25 @@ Input (D) → ... → Bottleneck (B) → ... → Output (D)
        └─ encoder ─┘          └─ decoder ─┘
 ```
 
-#### Два способа задания архитектуры
+#### Две формы архитектуры
 
-Форма слоёв задаётся через sweep или вручную:
-
-| Форма | Описание | Используется |
-|-------|----------|-------------|
-| **Rectangular** (по умолчанию) | `[D] + [H]×n + [B] + [H]×n + [D]` — все скрытые слои одинаковой ширины H | `make_rectangular()` |
-| **Pyramid** | `[D] → h₁ → ... → hₙ → [B] → hₙ → ... → h₁ → [D]` — сужающаяся к центру | `make_pyramid()` |
+| Форма | Описание | Функция |
+|-------|----------|---------|
+| **Rectangular** | `[D] + [H]×n + [B] + [H]×n + [D]` — скрытые слои одинаковой ширины H | `make_rectangular()` |
+| **Pyramid** | `[D] → h₁ → … → hₙ → [B] → hₙ → … → h₁ → [D]` — сужающаяся к центру | `make_pyramid()` |
 
 Где:
 - `D` = `seq_len × 21` (input_dim), например 128×21 = 2688
 - `B` = `bottleneck` (по умолчанию = seq_len)
-- `H` = `hidden_dim` = `D × b` (b — коэффициент ширины)
+- `H` = `hidden_dim` ≈ `D × b` (b — коэффициент ширины)
 - `n` = количество скрытых слоёв с каждой стороны
 
-#### Быстрый пример: создать модель
+#### Создание модели
 
 ```python
 from model import Autoencoder
 
-# 15-layer autoencoder: 2688 → ... → 128 → ... → 2688
+# 11-layer autoencoder: 2688 → ... → 128 → ... → 2688
 sizes = [2688, 5376, 10752, 5376, 5376, 128, 5376, 5376, 10752, 5376, 2688]
 model = Autoencoder(sizes, activation='silu', normalization='batchnorm', dropout=0.1)
 
@@ -57,6 +56,9 @@ z = model.encode(x)  # z.shape = (batch, 128)
 
 # Декодинг (возвращает логиты — нужен sigmoid для вероятностей)
 logits = model.decode(z)
+
+# Сквозной проход
+reconstructed = model(x)
 ```
 
 ---
@@ -65,15 +67,12 @@ logits = model.decode(z)
 
 ### Кодировка Unicode-21
 
-Каждый символ ∈ [U+0000, U+1FFFFF] представляется как 21 бит:
-- `ord(char)` → 21-битное целое → вектор из 21 нуля/единицы (старший бит первый)
+Каждый символ ∈ [U+0000, U+1FFFFF] → 21 бит (старший бит первый).
 
 ### SlidingWindowDataset
 
-Окна со **stride=1 символ** — каждый символ появляется в `seq_len` разных окнах.
-Без перекрытия при большом `seq_len` возникала бы «голодовка данных» (мало сэмплов).
-
-Реализация: `torch.as_strided` на float32-тензоре — окна это view, без копирования.
+Окна со **stride=1 символ** — каждый символ появляется в `seq_len` окнах.
+Реализован через `torch.as_strided` на float32-тензоре, без копирования.
 
 ### Двухуровневое кэширование
 
@@ -82,9 +81,7 @@ logits = model.decode(z)
 | Диск | uint8 packed (`data/cache/full_bits.u8`) | ~0.13 GB |
 | RAM | float32 unpacked | ~4.2 GB |
 
-При первом запуске: биты упаковываются в uint8 на диск, при загрузке — распаковываются в float32.
-В RAM нужно float32 для `as_strided` (uint8 не поддерживает произвольные страйды).
-
+При первом запуске: биты упаковываются в uint8 на диск → при загрузке распаковываются в float32.
 Автоматическая миграция со старого float32-кэша.
 
 ---
@@ -93,34 +90,29 @@ logits = model.decode(z)
 
 ```
 enc_dec/
-├── model.py         # Autoencoder (nn.Module): encoder, decoder, init, dropout
-├── configs.py        # PrimaryConfig (датакласс) — все гиперпараметры
-├── data.py           # Загрузка, Unicode-21, SlidingWindowDataset, кэш
-├── trainers.py       # Тренировочный цикл: AMP, early stopping, GPU-safe прерывание
-├── logger.py         # CSV-логгер и resume-утилиты
-├── autoencoder.py    # CLI-тренировка: python autoencoder.py
-├── infer_test.py     # Интерактивная инференс-консоль
-├── sweep.py          # CLI sweep-раннер: grid, binary, grid×binary
-├── sweep_lib.py      # Разрешение архитектуры, train_one(), CSV-логирование
-├── sweep_config.py   # SweepConfig, ModelConfig, TrainingConfig (датаклассы)
-├── SWEEP.md          # Документация по sweep-системе
-├── README.md         # ← этот файл
-├── configs/          # 28 JSON-конфигов для разных sweep-экспериментов
-│   ├── ratio_20m.json
-│   ├── ratio_40m.json
-│   ├── ratio_80m.json
-│   ├── width_sweep.json
-│   ├── batch_sweep.json
-│   ├── norm_*.json           # Абляция нормализации (norm_bottleneck × norm_last)
-│   ├── norm_comp_*.json      # Сравнение batchnorm vs layernorm
-│   ├── pyramid_*.json        # Pyramid-архитектура
-│   ├── rect_binary_*.json    # Бинарный поиск по n
-│   └── binary_search.json    # Grid seq_len × binary n
-├── sessions/        # Чекпоинты (.pth) и CSV-логи (автосоздаётся)
+├── model.py              # Autoencoder (nn.Module)
+├── configs.py            # UNICODE_BITS = 21
+├── sweep_config.py       # ModelConfig, TrainConfig, SweepConfig, OutputConfig (датаклассы)
+├── data.py               # Загрузка текста, Unicode-21, SlidingWindowDataset, кэш
+├── train.py              # CLI тренировки одной модели (основной интерфейс)
+├── autoencoder.py        # Устаревший entry-point для тренировки (не рекомендуется)
+├── sweep.py              # CLI sweep-раннер: grid, binary, grid×binary
+├── sweep_lib.py          # resolve_architecture, train_one, build_optimizer, Lion, Sophia
+├── infer_test.py         # Интерактивная инференс-консоль
+├── logger.py             # TrainingLogger, GlobalLogger, LoggerConfig
+├── utils.py              # CUDA-безопасная очистка, проверка GPU
+├── SWEEP.md              # Документация по sweep-системе
+├── README.md             # ← этот файл
+├── training/             # Пакет тренировочного цикла
+│   ├── loop.py           # Основной цикл: валидация, чекпоинты, early-stopping
+│   ├── step.py           # Один шаг: forward + backward + AMP + grad clip
+│   ├── scheduler.py      # LR-шедулеры: onecycle, plateau, cosine, greedy, none
+│   └── checkpoint.py     # Сохранение/загрузка чекпоинтов и состояния early-stopping
+├── sessions/             # Чекпоинты (.pth, .opt, .sch) и CSV-логи
 ├── data/
-│   ├── dataset/     # .txt файлы (~50M символов русской прозы)
-│   └── cache/       # full_bits.u8 (автосоздаётся)
-└── archive/         # Старые файлы и RESEARCH
+│   ├── dataset/          # .txt файлы (~50M символов русской прозы)
+│   └── cache/            # full_bits.u8 (автосоздаётся)
+└── archive/              # История исследований
 ```
 
 ---
@@ -130,14 +122,26 @@ enc_dec/
 ### Тренировка одной модели
 
 ```bash
-# Из командной строки — простая тренировка на 30 эпох
-python autoencoder.py
+# Базовый запуск
+python train.py --n 3 --budget 160M --samples 50M
+
+# Plateau-шедулер + свой LR
+python train.py --n 2 --budget 160M --samples 120M --lr 0.002 --scheduler plateau
+
+# Авто-возобновление (просто запусти ещё раз)
+python train.py --n 3 --budget 160M --samples 50M
+
+# Fresh start (игнорировать чекпоинты)
+python train.py --n 3 --budget 160M --samples 50M --fresh
+
+# Сброс LR при возобновлении
+python train.py --n 4 --budget 160M --samples 100M --reset-lr --lr 0.001
 ```
 
-Конфигурация по умолчанию (в `configs.py`):
-- `seq_len=128`, `input_dim=2688`, `bottleneck=128`
-- `lr=5e-5`, `batch_size=1024`, 11-layer архитектура
-- `BCEWithLogitsLoss`, AdamW fused, AMP
+Основные параметры по умолчанию:
+- `seq_len=128`, `bottleneck=seq_len`, `activation=silu`, `normalization=batchnorm`
+- `lr=0.001`, `batch_size=256`, `optimizer=adamw_fused`
+- `scheduler=onecycle`, `init_gain=1.0`
 
 ### Sweep нескольких моделей
 
@@ -147,11 +151,14 @@ python autoencoder.py
 # Grid: перебрать n=2,4,6,8,10, b подобрать под 40M параметров
 python sweep.py grid --vary n=2,4,6,8,10 --solve b --budget 40M
 
-# Из конфига
-python sweep.py run --config configs/ratio_40m.json
+# Из JSON-конфига
+python sweep.py run --config train_n8_384m_v1.json
+
+# Конфиг + оверрайд
+python sweep.py run --config train_n8_384m_v1.json --override model.seq_len=64
 ```
 
-### Инференс: протестировать обученные модели
+### Инференс: протестировать модели
 
 ```bash
 python infer_test.py
@@ -159,43 +166,18 @@ python infer_test.py
 python infer_test.py --gpu
 ```
 
-Интерактивная консоль для проверки качества реконструкции:
-
-```
-  #  n_params  seq_len  n_hidden  folder                  file
-  0  160M      128      4         ratio40                 2688_7644_7644_128_sweep_n2_best.pth
-  1  160M      128      6         ratio40                 2688_5376_5376_128_sweep_n6.pth
-
-> 0                  # загрузить модель #0
-Loaded #0: s128, 160,000,000 params
-
-> Привет, мир!      # реконструировать текст
-Привет, мир!
-
-> random             # случайное окно из датасета
-@12345678: 'Анна Каренина...'
-Анна Каренина...
-
-> full 0             # первые 20 окон подряд
-@0: '— Ну что, приехали?' → '— Ну что, приехали?'
-...
-
-> val 0 1            # быстрая валидация моделей #0 и #1
-  #0 (s128, 160M)... val=0.031245
-  #1 (s128, 160M)... val=0.030891
-
-> q                  # выход
-```
-
 **Команды `infer_test.py`:**
 
 | Команда | Описание |
 |---------|----------|
 | `<#>` / `load <#>` | Загрузить модель по номеру |
-| `val <#> <#> ...` | Быстрая валидация на 1% датасета (без загрузки) |
-| `random` / `r` | Случайное окно из датасета |
-| `full [pos]` | Первые 20 окон подряд с позиции `pos` |
-| `<любой текст>` | Реконструировать введённый текст |
+| `val <#> <#> ...` | Быстрая валидация на 1% датасета |
+| `enc <text\|random\|@pos>` | Закодировать текст → латентный вектор |
+| `dec` / `dec <values>` | Декодировать латент → текст |
+| `z` / `latent` | Показать сохранённый латентный вектор |
+| `random` / `r` | Случайное окно → реконструкция |
+| `full [pos]` | 20 окон подряд с позиции |
+| `<любой текст>` | Прямая реконструкция |
 | `q` / `quit` | Выход |
 
 ---
@@ -204,51 +186,63 @@ Loaded #0: s128, 160,000,000 params
 
 ### Функция потерь
 
-`BCEWithLogitsLoss` — каждый из 21 бита на символ классифицируется независимо.
-Декодер выдаёт **логиты** (без sigmoid), лосс сам применяет sigmoid внутри.
+`BCEWithLogitsLoss` — каждый из 21 бита классифицируется независимо.
+Декодер выдаёт логиты, лосс применяет sigmoid внутри.
 
-### Управление LR
+### LR-шедулеры
 
-Поддерживаются три стратегии (поле `lr_scheduler` в конфиге):
-
-| Стратегия | Описание |
-|-----------|----------|
-| `cosine` | Линейный warmup → CosineAnnealingLR |
-| `plateau` | Линейный warmup → ReduceLROnPlateau |
-| `""` (пусто) | Без шедулера, константный LR |
+| Шедулер | Описание |
+|---------|----------|
+| `onecycle` | OneCycleLR — быстрый разгон + плавное затухание |
+| `plateau` | ReduceLROnPlateau — снижение LR при выходе на плато |
+| `cosine` | CosineAnnealingLR с warmup |
+| `greedy` | Zeroth-order GreedyLR — адаптивный с пробами (bidirectional) |
+| `none` | Константный LR |
 
 При рестарте warmup пропускается — LR уже на рабочем уровне.
 
+### Оптимизаторы
+
+| Оптимизатор | Примечание |
+|-------------|------------|
+| `adamw_fused` | По умолчанию; fused-реализация на CUDA |
+| `adamw` | Стандартный AdamW |
+| `lion` | EvoLved Sign Momentum (Google) |
+| `sophia` | Second-order clipped optimizer |
+| `sgd` | SGD + momentum |
+| `nag` | SGD + Nesterov momentum |
+
 ### Early stopping
 
-По валидационной ошибке. Если `patience` чекпоинтов без улучшения — тренировка останавливается.
-Лучшая модель сохраняется как `*_best.pth`.
-
-При запуске через sweep `no_val=True` — early stopping отключён (быстрее, но без защиты от переобучения).
+По валидационной ошибке. Если `patience` чекпоинтов без улучшения — остановка.
+Лучшая модель сохраняется как `*_best.pth`. Состояние восстанавливается при рестарте.
 
 ### Mixed precision (AMP)
 
-Автоматически включается на CUDA: `autocast(bfloat16)` + `GradScaler`.
-Даталоадер использует `pin_memory=True` + `non_blocking=True` для асинхронной передачи.
+Автоматически на CUDA: `autocast(bfloat16)` + `GradScaler`.
+Даталоадер: `pin_memory=True` + `non_blocking=True`.
 
----
+### CUDA-безопасность
 
-## GPU-безопасность
-
-Система защиты от GPU ERR! (проблема RTX 3070 Mobile):
-
-- **Signal handlers** — только устанавливают флаг, **никогда не вызывают CUDA** из обработчика
-- **Graceful cleanup** — `torch.cuda.synchronize()` + `empty_cache()` при нормальном завершении
-- **`atexit` handler** — страховка: даже при падении без обработчика
-- **OOM protection** — ловится, GPU чистится, модель пропускается в sweep
-- **Crash-only прерывания** — безопасные точки между батчами, CUDA не прерывается в середине операции
-
-> Если GPU ушёл в состояние ERR!, поможет только `sudo reboot` + физическое отключение питания.
-> Подробнее — [`MEMORY.md`](../MEMORY.md), секция «GPU — RTX 3070 Mobile».
+- Signal handlers только выставляют флаг, не вызывают CUDA
+- При выходе: `torch.cuda.synchronize()` + `empty_cache()`
+- `atexit` handler как страховка при падении
+- OOM protection: GPU чистится, модель пропускается в sweep
 
 ---
 
 ## Конфигурация
 
-См. `TrainingConfig` и `ModelConfig` в [`sweep_config.py`](sweep_config.py) —
-расширенный набор полей для sweep-экспериментов (weight decay, warmup, оптимизатор и др.).
+Детальная структура конфигов — в [`sweep_config.py`](sweep_config.py):
+
+- `ModelConfig` — архитектура, активации, нормализация
+- `TrainConfig` — оптимизатор, LR, шедулер, batch, early-stopping
+- `SweepSpec` — стратегия (grid/binary), варьируемый параметр, бюджет
+- `OutputConfig` — пути, устройство
+- `SweepConfig` — объединяет всё; сериализуется в JSON
+
+---
+
+## Результаты исследований
+
+См. [`archive/RESEARCH_2026-06-18.md`](archive/RESEARCH_2026-06-18.md) — актуальные результаты sweep-экспериментов.
