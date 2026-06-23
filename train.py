@@ -96,7 +96,7 @@ Examples:
     p.add_argument('--plateau-patience', type=int, default=10,
                    help='Plateau patience (checkpoints)')
     p.add_argument('--num-workers', type=int, default=2)
-    p.add_argument('--checkpoint-interval', type=int, default=250000,
+    p.add_argument('--checkpoint-interval', type=int, default=100000,
                    help='Samples between validation/checkpoint passes')
     p.add_argument('--train-ratio', type=float, default=0.999)
 

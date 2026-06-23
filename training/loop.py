@@ -88,7 +88,7 @@ def run_training(start_samples: int, max_samples: int, model, optimizer, criteri
         persistent_workers=(num_workers > 0),
     )
 
-    LOG_INTERVAL = val_interval or (250_000 if no_val else 500_000)
+    LOG_INTERVAL = val_interval or (100_000 if no_val else 500_000)
     val_loader = DataLoader(
         val_dataset, batch_size=batch_size, shuffle=False,
         num_workers=num_workers,
