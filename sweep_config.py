@@ -45,9 +45,13 @@ class TrainConfig:
     batch_size: int = 256
     lr: float = 0.001
     grad_clip: float = 1.0
-    scheduler: str = 'onecycle'        # onecycle | plateau | cosine | none
-    warmup_fraction: float = 0.05      # fraction of total steps for warmup
-    optimizer: str = 'adamw_fused'     # adamw_fused | adamw | sgd
+    scheduler: str = 'onecycle'        # onecycle | plateau | cosine | greedy | none
+    warmup_fraction: float = 0.02      # fraction of total steps for warmup
+    pct_start: float = 0.3             # onecycle: fraction at which LR peaks
+    plateau_patience: int = 10          # plateau: checkpoints without improvement
+    greedy_factor: float = 0.5          # greedy: LR multiplier when stuck
+    greedy_patience: int = 5            # greedy: checkpoints without improvement
+    optimizer: str = 'adamw_fused'     # adamw_fused | adamw | sgd | nag | lion | sophia
     weight_decay: float = 0.01
     decay_linear_only: bool = True     # True → only Linear weights; False → all params
     early_stop_patience: int = 3

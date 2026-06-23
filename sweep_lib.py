@@ -3,9 +3,11 @@
 Architecture helpers: count_params, make_rectangular, solve_b_for_n, solve_n_for_b.
 Training: train_one, compile_model, train_setup, save_paths.
 Runtime: RuntimeContext, setup_runtime.
+Optimizer: build_optimizer — NAG, AdamW, Lion, Sophia.
 Logging: re-exports from logger.
 """
 
+import math
 import os
 import time as time_mod
 
@@ -26,6 +28,169 @@ from logger import (
     init_log, gather_done, log_row, UNIFIED_COLUMNS,  # backward-compat
 )
 from sweep_config import SweepConfig, ModelConfig, TrainConfig, OutputConfig
+
+
+# ══════════════════════════════════════════════════════════════
+# Custom Optimizers
+# ══════════════════════════════════════════════════════════════
+
+class Lion(torch.optim.Optimizer):
+    """Lion (EvoLved Sign Momentum) — PyTorch port from Google.
+
+    Implements the Lion optimizer with sign-based updates.
+    Reference: https://arxiv.org/abs/2302.06675
+    """
+
+    def __init__(self, params, lr=1e-4, betas=(0.9, 0.99),
+                 weight_decay=0.01):
+        defaults = dict(lr=lr, betas=betas, weight_decay=weight_decay)
+        super().__init__(params, defaults)
+
+    @torch.no_grad()
+    def step(self, closure=None):
+        loss = None
+        if closure is not None:
+            with torch.enable_grad():
+                loss = closure()
+        for group in self.param_groups:
+            lr = group['lr']
+            beta1, beta2 = group['betas']
+            wd = group['weight_decay']
+
+            for p in group['params']:
+                if p.grad is None:
+                    continue
+                grad = p.grad
+                state = self.state[p]
+                if len(state) == 0:
+                    state['exp_avg'] = torch.zeros_like(p)
+
+                exp_avg = state['exp_avg']
+
+                # weight decay (decoupled, not L2-regularisation)
+                if wd > 0:
+                    p.mul_(1 - lr * wd)
+
+                # Lion update: c = beta1*m + (1-beta1)*g, then m = beta2*m + (1-beta2)*g
+                update = exp_avg.mul(beta1).add_(grad, alpha=1 - beta1)
+                p.add_(update.sign(), alpha=-lr)
+
+                exp_avg.mul_(beta2).add_(grad, alpha=1 - beta2)
+        return loss
+
+
+class Sophia(torch.optim.Optimizer):
+    """Sophia — second-order clipped optimizer.
+
+    Uses exponential moving average of Hessian diagonal estimate (hutchinson)
+    for gradient clipping before Adam-style update.
+    Reference: https://arxiv.org/abs/2305.14342
+    """
+
+    def __init__(self, params, lr=1e-3, betas=(0.965, 0.99),
+                 weight_decay=0.01, rho=0.01):
+        defaults = dict(lr=lr, betas=betas, weight_decay=weight_decay, rho=rho)
+        super().__init__(params, defaults)
+
+    @torch.no_grad()
+    def step(self, closure=None):
+        loss = None
+        if closure is not None:
+            with torch.enable_grad():
+                loss = closure()
+        for group in self.param_groups:
+            lr = group['lr']
+            beta1, beta2 = group['betas']
+            wd = group['weight_decay']
+            rho = group['rho']
+            lr_neg = -lr
+
+            for p in group['params']:
+                if p.grad is None:
+                    continue
+                grad = p.grad
+                state = self.state[p]
+                if len(state) == 0:
+                    state['step'] = 0
+                    state['exp_avg'] = torch.zeros_like(p)
+                    state['hessian'] = torch.zeros_like(p)
+
+                state['step'] += 1
+                exp_avg = state['exp_avg']
+                hessian = state['hessian']
+
+                # Move averages
+                exp_avg.mul_(beta1).add_(grad, alpha=1 - beta1)
+                hessian.mul_(beta2).addcmul_(grad, grad, value=1 - beta2)
+
+                # Bias correction
+                bias1 = 1 - beta1 ** state['step']
+                bias2 = 1 - beta2 ** state['step']
+
+                # Clipped update: clip(grad / max(hessian, eps), clip_val) * lr
+                denom = hessian.div(bias2).sqrt().clamp(min=1e-15)
+                clipped = (exp_avg.div(bias1) / denom).clamp(-rho, rho)
+
+                # Decoupled weight decay
+                if wd > 0:
+                    p.mul_(1 - lr * wd)
+
+                p.add_(clipped, alpha=lr_neg)
+        return loss
+
+
+def build_optimizer(model, train_config: TrainConfig, device):
+    """Build optimizer from TrainConfig.
+
+    Handles param groups (decay_linear_only) and returns the optimizer
+    with appropriate constructor.
+    """
+    tc = train_config
+
+    if tc.decay_linear_only:
+        decay_params = []
+        no_decay_params = []
+        for p in model.parameters():
+            if not p.requires_grad:
+                continue
+            if p.dim() >= 2:
+                decay_params.append(p)
+            else:
+                no_decay_params.append(p)
+        optim_groups = [
+            {'params': decay_params, 'weight_decay': tc.weight_decay},
+            {'params': no_decay_params, 'weight_decay': 0.0},
+        ]
+    else:
+        optim_groups = model.parameters()
+
+    opt_name = tc.optimizer
+    lr = tc.lr
+    wd = tc.weight_decay
+
+    if opt_name == 'nag':
+        return optim.SGD(optim_groups, lr=lr, weight_decay=wd,
+                         momentum=0.9, nesterov=True)
+
+    if opt_name == 'sgd':
+        return optim.SGD(optim_groups, lr=lr, weight_decay=wd, momentum=0.9)
+
+    if opt_name == 'adamw_fused' and device.type == 'cuda':
+        return optim.AdamW(optim_groups, lr=lr, weight_decay=wd, fused=True)
+
+    if opt_name in ('adamw', 'adamw_fused'):
+        return optim.AdamW(optim_groups, lr=lr, weight_decay=wd)
+
+    if opt_name == 'lion':
+        return Lion(optim_groups, lr=lr, weight_decay=wd,
+                    betas=(0.9, 0.99))
+
+    if opt_name == 'sophia':
+        return Sophia(optim_groups, lr=lr, weight_decay=wd,
+                      betas=(0.965, 0.99), rho=0.01)
+
+    # fallback
+    return optim.AdamW(optim_groups, lr=lr, weight_decay=wd)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -416,35 +581,7 @@ def train_one(arch: dict, sweep_config: SweepConfig, model_prefix: str,
         return None, 'oom', 0
 
     # ── Optimizer ──
-    if tc.decay_linear_only:
-        decay_params = []
-        no_decay_params = []
-        for p in model.parameters():
-            if not p.requires_grad:
-                continue
-            if p.dim() >= 2:
-                decay_params.append(p)
-            else:
-                no_decay_params.append(p)
-        optim_groups = [
-            {'params': decay_params, 'weight_decay': tc.weight_decay},
-            {'params': no_decay_params, 'weight_decay': 0.0},
-        ]
-    else:
-        optim_groups = model.parameters()
-
-    if tc.optimizer == 'adamw_fused' and device.type == 'cuda':
-        optimizer = optim.AdamW(optim_groups, lr=tc.lr,
-                                weight_decay=tc.weight_decay, fused=True)
-    elif tc.optimizer in ('adamw', 'adamw_fused'):
-        optimizer = optim.AdamW(optim_groups, lr=tc.lr,
-                                weight_decay=tc.weight_decay)
-    elif tc.optimizer == 'sgd':
-        optimizer = optim.SGD(optim_groups, lr=tc.lr,
-                              weight_decay=tc.weight_decay, momentum=0.9)
-    else:
-        optimizer = optim.AdamW(optim_groups, lr=tc.lr,
-                                weight_decay=tc.weight_decay)
+    optimizer = build_optimizer(model, tc, device)
 
     total_batches = int(target_samples / bs) + 1
     start_samples = train_setup(model, optimizer, csv_path, model_path, device)
@@ -453,7 +590,11 @@ def train_one(arch: dict, sweep_config: SweepConfig, model_prefix: str,
         start_samples = get_last_samples(csv_path)  # load weights, skip opt state
 
     step_scheduler, checkpoint_scheduler = build_scheduler(
-        optimizer, tc, total_batches, start_samples=start_samples)
+        optimizer, tc, total_batches, start_samples=start_samples,
+        pct_start=tc.pct_start,
+        plateau_patience=tc.plateau_patience,
+        greedy_factor=tc.greedy_factor,
+        greedy_patience=tc.greedy_patience)
     if start_samples > 0 and checkpoint_scheduler is not None:
         load_plat_scheduler(checkpoint_scheduler, model_path)
     criterion = nn.BCEWithLogitsLoss()

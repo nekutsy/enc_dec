@@ -17,6 +17,9 @@ Usage:
   # Custom config
   python train.py --n 2 --budget 160M --samples 50M --lr 0.002 --scheduler plateau
 
+  # Custom optimizer + scheduler
+  python train.py --n 3 --budget 160M --samples 50M --optimizer lion --scheduler greedy
+
   # From JSON config
   python train.py --config train_best.json
 
@@ -82,12 +85,16 @@ Examples:
     p.add_argument('--batch-size', type=int, default=256)
     p.add_argument('--lr', type=float, default=0.001)
     p.add_argument('--scheduler', default='onecycle',
-                   choices=['onecycle', 'plateau', 'cosine', 'none'])
+                   choices=['onecycle', 'plateau', 'cosine', 'greedy', 'none'])
     p.add_argument('--optimizer', default='adamw_fused',
-                   choices=['adamw_fused', 'adamw', 'sgd'])
+                   choices=['adamw_fused', 'adamw', 'sgd', 'nag', 'lion', 'sophia'])
     p.add_argument('--weight-decay', type=float, default=0.01)
     p.add_argument('--grad-clip', type=float, default=1.0)
     p.add_argument('--early-stop', type=int, default=3, help='Early stop patience (checkpoints)')
+    p.add_argument('--pct-start', type=float, default=0.3,
+                   help='OneCycle peak position (default 0.3, lower = earlier peak)')
+    p.add_argument('--plateau-patience', type=int, default=10,
+                   help='Plateau patience (checkpoints)')
     p.add_argument('--num-workers', type=int, default=2)
     p.add_argument('--train-ratio', type=float, default=0.999)
 
@@ -150,6 +157,8 @@ Examples:
                 optimizer=args.optimizer,
                 weight_decay=args.weight_decay,
                 early_stop_patience=args.early_stop,
+                pct_start=args.pct_start,
+                plateau_patience=args.plateau_patience,
                 num_workers=args.num_workers,
                 train_ratio=args.train_ratio,
             ),
@@ -194,7 +203,8 @@ Examples:
         # Remove checkpoint files to force clean start
         from sweep_lib import save_paths
         import glob as _glob
-        model_path, csv_path = save_paths(sizes, args.name or 'train',
+        model_name = args.name or f'n{arch["n"]}_s{cfg.model.seq_len}'
+        model_path, csv_path = save_paths(sizes, model_name,
                                           prefix=cfg.output.workspace)
         for pattern in [model_path, model_path + '.opt', model_path + '.sch',
                         model_path.replace('.pth', '_best.pth'),
@@ -238,6 +248,8 @@ def _cli_to_overrides(overrides):
         'weight_decay': 'training.weight_decay',
         'grad_clip': 'training.grad_clip',
         'early_stop': 'training.early_stop_patience',
+        'pct_start': 'training.pct_start',
+        'plateau_patience': 'training.plateau_patience',
         'num_workers': 'training.num_workers',
         'train_ratio': 'training.train_ratio',
         'workspace': 'output.workspace',

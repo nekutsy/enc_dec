@@ -43,9 +43,9 @@ class LoggerConfig:
 
     @classmethod
     def full(cls) -> 'LoggerConfig':
-        """All metrics enabled."""
-        return cls(epoch=True, total_samples=True, speed_sps=True,
-                   train_loss=True, train_loss_ema=True, val_loss=True, lr=True)
+        """All metrics except ema (noisy, distracting)."""
+        return cls(epoch=False, total_samples=True, speed_sps=True,
+                   train_loss=True, train_loss_ema=False, val_loss=True, lr=True)
 
     # Maps field name → CSV header string, in column order
     _COLUMN_MAP = [
@@ -101,6 +101,8 @@ class TrainingLogger:
         self._last_log_time: float | None = None
         self._last_log_samples: int = 0
         self._train_start_time: float | None = None
+        self._prog_last_time: float | None = None
+        self._prog_last_samples: int = 0
 
     # ── Batch-level updates ─────────────────────────────────
 
@@ -219,15 +221,15 @@ class TrainingLogger:
     def format_progress(self, total_samples: int, max_samples: int,
                         loss: float, epoch_size: int) -> str:
         """Format a progress line for stderr (in-place updates)."""
-        progress = (total_samples / max_samples) * 100 if max_samples > 0 else 0
         now = time_mod.time()
         speed = 0.0
-        if self._last_log_time is not None and now > self._last_log_time:
-            speed = (total_samples - self._last_log_samples) / (now - self._last_log_time)
-        eta = (max_samples - total_samples) / speed if speed > 0 else 0
-        epoch = total_samples / epoch_size if epoch_size > 0 else 0
-        line = (f'\r\033[KProgress: {progress:.1f}% | Loss: {loss:.6f} | '
-                f'Speed: {speed:.0f} samples/s | ETA: {eta:.0f}s | Epoch: {epoch:.2f}')
+        if self._prog_last_time is not None and now > self._prog_last_time:
+            samples_delta = total_samples - self._prog_last_samples
+            speed = samples_delta / (now - self._prog_last_time)
+        self._prog_last_time = now
+        self._prog_last_samples = total_samples
+        line = (f'\r\033[Ksamples={total_samples:>11,} | '
+                f'loss={loss:.6f} | speed={speed:.0f} sps')
         return line
 
     @property
