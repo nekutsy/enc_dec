@@ -50,7 +50,7 @@ class TrainConfig:
     pct_start: float = 0.3             # onecycle: fraction at which LR peaks
     plateau_patience: int = 10          # plateau: checkpoints without improvement
     greedy_factor: float = 0.5          # greedy: LR multiplier when stuck
-    greedy_patience: int = 5            # greedy: checkpoints without improvement
+    greedy_lock_steps: int = 3           # greedy: lock checkpoints after reduction
     optimizer: str = 'adamw_fused'     # adamw_fused | adamw | sgd | nag | lion | sophia
     weight_decay: float = 0.01
     decay_linear_only: bool = True     # True → only Linear weights; False → all params

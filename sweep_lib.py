@@ -599,7 +599,7 @@ def train_one(arch: dict, sweep_config: SweepConfig, model_prefix: str,
         pct_start=tc.pct_start,
         plateau_patience=tc.plateau_patience,
         greedy_factor=tc.greedy_factor,
-        greedy_patience=tc.greedy_patience)
+        lock_steps=tc.greedy_lock_steps)
     if start_samples > 0 and checkpoint_scheduler is not None:
         load_plat_scheduler(checkpoint_scheduler, model_path)
     criterion = nn.BCEWithLogitsLoss()
