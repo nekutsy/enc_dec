@@ -117,8 +117,9 @@ class GreedyLR:
             self._start_probe()
             return
 
-        # Apply δ-based adjustment
+        # Apply δ-based adjustment (clipped to damp single-batch spikes)
         delta = (self._ema - self._prev_ema) / abs(self._prev_ema)
+        delta = max(-0.1, min(0.1, delta))  # single spikes can't slam LR
 
         multiplier = 1.0 - self.factor * delta
         multiplier = max(1.0 - self.factor, min(1.0 + self.factor, multiplier))
