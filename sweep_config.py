@@ -52,6 +52,10 @@ class TrainConfig:
     greedy_factor: float = 0.5          # greedy: γ — adjustment aggressiveness
     greedy_beta: float = 0.9            # greedy: EMA smoothing coefficient
     greedy_lock_steps: int = 3           # greedy: lock checkpoints after LR decrease
+    greedy_probe_patience: int = 4       # greedy: flat δ checkpoints before probing
+    greedy_probe_factor: float = 0.5     # greedy: LR multiplier on probe
+    greedy_probe_lock: int = 6           # greedy: probe observation window
+    greedy_cooldown: int = 12            # greedy: cooldown after failed probe
     optimizer: str = 'adamw_fused'     # adamw_fused | adamw | sgd | nag | lion | sophia
     weight_decay: float = 0.01
     decay_linear_only: bool = True     # True → only Linear weights; False → all params
