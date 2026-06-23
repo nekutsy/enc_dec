@@ -115,8 +115,9 @@ class SweepRunner:
         arch = resolve_architecture(vary_value, vary_name, cfg)
         n_params = arch['n_params']
 
-        if n_params > 250_000_000:
-            print(f'  ⚠ {n_params:,} > 250M — skipping')
+        max_params_m = 500_000_000
+        if n_params > max_params_m:
+            print(f'  ⚠ {n_params:,} > {max_params_m//1_000_000}M — skipping')
             return None, 'skip'
 
         prefix = f'sweep_{vary_name}{vary_value}'
@@ -351,6 +352,7 @@ def build_parser():
     gp.add_argument('--sweep-log', default='sessions/sweep_summary.csv')
     gp.add_argument('--device', default='auto')
     gp.add_argument('--batch-size', type=int, default=None)
+    gp.add_argument('--early-stop', type=int, default=None)
     gp.add_argument('--binary-on', default=None,
                     help='Parameter to binary-search for each grid value')
     gp.add_argument('--range', type=int, nargs=2, default=None)
@@ -394,6 +396,7 @@ def _cli_shorthand_to_config(args, vary_values) -> SweepConfig:
             lr=getattr(args, 'lr', 0.001),
             scheduler=getattr(args, 'scheduler', 'onecycle'),
             optimizer=getattr(args, 'optimizer', 'adamw_fused'),
+            early_stop_patience=getattr(args, 'early_stop', None) or 3,
         ),
         sweep=SweepSpec(
             strategy=args.command,
@@ -426,7 +429,12 @@ def main():
 
     if args.command == 'grid':
         vary_str = args.vary.split('=', 1)[1]
-        vary_values = [int(v) if '.' not in v else float(v) for v in vary_str.split(',')]
+        vary_values = []
+        for v in vary_str.split(','):
+            try:
+                vary_values.append(int(v) if '.' not in v else float(v))
+            except ValueError:
+                vary_values.append(v)
     else:
         vary_values = list(args.range)
 
