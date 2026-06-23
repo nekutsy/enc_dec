@@ -8,6 +8,7 @@ Logging: re-exports from logger.
 """
 
 import math
+import gc
 import os
 import time as time_mod
 
@@ -103,7 +104,6 @@ class Sophia(torch.optim.Optimizer):
             beta1, beta2 = group['betas']
             wd = group['weight_decay']
             rho = group['rho']
-            lr_neg = -lr
 
             for p in group['params']:
                 if p.grad is None:
@@ -127,15 +127,20 @@ class Sophia(torch.optim.Optimizer):
                 bias1 = 1 - beta1 ** state['step']
                 bias2 = 1 - beta2 ** state['step']
 
-                # Clipped update: clip(grad / max(hessian, eps), clip_val) * lr
-                denom = hessian.div(bias2).sqrt().clamp(min=1e-15)
-                clipped = (exp_avg.div(bias1) / denom).clamp(-rho, rho)
+                # Reuse grad as scratch (zero_grad clears it each step):
+                #   grad = sqrt(hessian / bias2).clamp(min=eps)
+                #   grad = (exp_avg / bias1) / grad
+                #   grad = clip(grad, -rho, rho)
+                grad.copy_(hessian).div_(bias2).sqrt_().clamp_(min=1e-15)
+                grad.mul_(bias1)
+                torch.div(exp_avg, grad, out=grad)
+                grad.clamp_(-rho, rho)
 
                 # Decoupled weight decay
                 if wd > 0:
                     p.mul_(1 - lr * wd)
 
-                p.add_(clipped, alpha=lr_neg)
+                p.add_(grad, alpha=-lr)
         return loss
 
 
@@ -688,6 +693,7 @@ def train_one(arch: dict, sweep_config: SweepConfig, model_prefix: str,
         # Always release GPU memory before returning
         del model
         del optimizer
+        gc.collect()
         cuda_safe_cleanup()
 
     if train_done is None:

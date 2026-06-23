@@ -353,6 +353,7 @@ def build_parser():
     gp.add_argument('--device', default='auto')
     gp.add_argument('--batch-size', type=int, default=None)
     gp.add_argument('--early-stop', type=int, default=None)
+    gp.add_argument('--no-val', action='store_true')
     gp.add_argument('--binary-on', default=None,
                     help='Parameter to binary-search for each grid value')
     gp.add_argument('--range', type=int, nargs=2, default=None)
