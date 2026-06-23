@@ -90,7 +90,7 @@ Examples:
                    choices=['adamw_fused', 'adamw', 'sgd', 'nag', 'lion', 'sophia'])
     p.add_argument('--weight-decay', type=float, default=0.01)
     p.add_argument('--grad-clip', type=float, default=1.0)
-    p.add_argument('--early-stop', type=int, default=3, help='Early stop patience (checkpoints)')
+    p.add_argument('--early-stop', type=int, default=20, help='Early stop patience (checkpoints)')
     p.add_argument('--pct-start', type=float, default=0.3,
                    help='OneCycle peak position (default 0.3, lower = earlier peak)')
     p.add_argument('--plateau-patience', type=int, default=10,

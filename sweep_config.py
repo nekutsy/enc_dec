@@ -60,7 +60,7 @@ class TrainConfig:
     optimizer: str = 'adamw_fused'     # adamw_fused | adamw | sgd | nag | lion | sophia
     weight_decay: float = 0.01
     decay_linear_only: bool = True     # True → only Linear weights; False → all params
-    early_stop_patience: int = 3
+    early_stop_patience: int = 20
     train_ratio: float = 0.999
     checkpoint_interval: int = 250_000   # samples between validation/checkpoint passes
     num_workers: int = 2               # DataLoader workers (2 for GPU, 0 for CPU)

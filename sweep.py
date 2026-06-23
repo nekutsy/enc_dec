@@ -397,7 +397,7 @@ def _cli_shorthand_to_config(args, vary_values) -> SweepConfig:
             lr=getattr(args, 'lr', 0.001),
             scheduler=getattr(args, 'scheduler', 'onecycle'),
             optimizer=getattr(args, 'optimizer', 'adamw_fused'),
-            early_stop_patience=getattr(args, 'early_stop', None) or 3,
+            early_stop_patience=getattr(args, 'early_stop', None) or 20,
         ),
         sweep=SweepSpec(
             strategy=args.command,
