@@ -49,8 +49,9 @@ class TrainConfig:
     warmup_fraction: float = 0.02      # fraction of total steps for warmup
     pct_start: float = 0.3             # onecycle: fraction at which LR peaks
     plateau_patience: int = 10          # plateau: checkpoints without improvement
-    greedy_factor: float = 0.5          # greedy: LR multiplier when stuck
-    greedy_lock_steps: int = 3           # greedy: lock checkpoints after reduction
+    greedy_factor: float = 0.5          # greedy: γ — adjustment aggressiveness
+    greedy_beta: float = 0.9            # greedy: EMA smoothing coefficient
+    greedy_lock_steps: int = 3           # greedy: lock checkpoints after LR decrease
     optimizer: str = 'adamw_fused'     # adamw_fused | adamw | sgd | nag | lion | sophia
     weight_decay: float = 0.01
     decay_linear_only: bool = True     # True → only Linear weights; False → all params

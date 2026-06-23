@@ -6,88 +6,95 @@ import torch
 # ── GreedyLR ──────────────────────────────────────────────
 
 class GreedyLR:
-    """Greedy per-checkpoint LR scheduler.
+    """Zeroth-order GreedyLR — bidirectional adaptive LR scheduler.
 
-    Algorithm (fundamentally different from plateau):
-      1. At each checkpoint, evaluate val_loss against best_loss.
-      2. If improved → keep LR, update best, reset bad counter.
-      3. If NOT improved → immediately halve LR (greedy — act on first
-         sign of stalling, not after N confirmations).
-      4. Enter "lock" phase: don't reduce again for `lock_steps`
-         checkpoints, giving the new LR time to show results.
-      5. After lock expires:
-         - If loss improved over the pre-reduction best → LR was a good
-           greedy move, continue normally.
-         - If loss did NOT improve → reduction didn't help, halve again
-           and enter a new lock.
+    Based on: "Zeroth Order GreedyLR" (Amazon Science).
 
-    Key difference from ReduceLROnPlateau:
-      - patience=0 by design — acts on the first bad checkpoint
-      - lock_steps prevents panic-chaining reductions
-      - the question is "did the reduction help?" not "are we stuck?"
+    Algorithm:
+      1. Track EMA of val_loss:  smoothed = β·smoothed + (1-β)·current
+      2. Compute relative change:  δ = (smoothed_now - smoothed_prev) / smoothed_prev
+      3. Adjust LR:  LR = LR · (1 - γ·δ)
+         - Loss decreased (δ < 0) → LR increases (greedy: push when winning)
+         - Loss increased (δ > 0) → LR decreases (retreat when losing)
+      4. Clamp multiplier to [1-γ, 1+γ] — protects against outlier changes
+      5. Lock for `lock_steps` checkpoints after a decrease to let LR stabilise
+      6. Clamp LR to [min_lr, max_lr]
+
+    Key property: bidirectional — raises LR on improvement, lowers on
+    degradation. Unlike plateau-based schedulers that only cut LR.
 
     Compatible with checkpoint save/load via state_dict().
     """
 
-    def __init__(self, optimizer, factor=0.5, lock_steps=3, min_lr=1e-7):
+    def __init__(self, optimizer, factor=0.5, beta=0.9, lock_steps=3,
+                 min_lr=1e-7, max_lr=0.1):
         self.optimizer = optimizer
-        self.factor = factor
+        self.factor = factor        # γ: controls adjustment aggressiveness
+        self.beta = beta            # EMA smoothing coefficient
         self.lock_steps = lock_steps
         self.min_lr = min_lr
-        self.best_loss = float('inf')
-        self.bad_counter = 0
-        self._locked = 0           # remaining lock checkpoints (>0 → locked)
-        self._lock_best = float('inf')  # best_loss at moment of reduction
+        self.max_lr = max_lr
+        self._ema = None            # exponential moving average of loss
+        self._prev_ema = None       # previous checkpoint's EMA
+        self._locked = 0            # remaining lock checkpoints
 
     def step(self, val_loss):
+        # Update EMA
+        if self._ema is None:
+            self._ema = val_loss
+        else:
+            self._ema = self.beta * self._ema + (1 - self.beta) * val_loss
+
+        # Lock phase: track EMA but don't change LR
         if self._locked > 0:
-            # Lock phase: collect evidence, don't reduce yet.
             self._locked -= 1
-            if val_loss < self.best_loss:
-                self.best_loss = val_loss
             if self._locked == 0:
-                # Lock expired — check if the reduction paid off.
-                if self.best_loss >= self._lock_best:
-                    # Did not beat pre-reduction best → reduce again.
-                    self._reduce_lr()
-                # else: reduction helped, stay at current LR, exit lock silently.
+                self._prev_ema = self._ema  # reset baseline after lock
             return
 
-        if val_loss < self.best_loss:
-            self.best_loss = val_loss
-            self.bad_counter = 0
-        else:
-            self.bad_counter += 1
-            # Act immediately on first bad checkpoint.
-            self._reduce_lr()
+        # Not locked — compute δ and adjust
+        if self._prev_ema is None:
+            self._prev_ema = self._ema
+            return
 
-    def _reduce_lr(self):
-        self._lock_best = self.best_loss
-        self._locked = self.lock_steps
-        self.bad_counter = 0
+        if self._prev_ema == 0:
+            self._prev_ema = self._ema
+            return
+
+        delta = (self._ema - self._prev_ema) / self._prev_ema
+        multiplier = 1.0 - self.factor * delta
+
+        # Clamp multiplier to prevent wild swings
+        multiplier = max(1.0 - self.factor, min(1.0 + self.factor, multiplier))
+
+        if multiplier < 1.0:
+            # LR decreased — enter lock
+            self._locked = self.lock_steps
+
+        self._prev_ema = self._ema
+
         for pg in self.optimizer.param_groups:
-            pg['lr'] = max(pg['lr'] * self.factor, self.min_lr)
+            pg['lr'] = max(self.min_lr, min(self.max_lr, pg['lr'] * multiplier))
 
     def state_dict(self):
         return {
-            'best_loss': self.best_loss,
-            'bad_counter': self.bad_counter,
+            '_ema': self._ema,
+            '_prev_ema': self._prev_ema,
             '_locked': self._locked,
-            '_lock_best': self._lock_best,
         }
 
     def load_state_dict(self, sd):
-        self.best_loss = sd['best_loss']
-        self.bad_counter = sd['bad_counter']
+        self._ema = sd['_ema']
+        self._prev_ema = sd['_prev_ema']
         self._locked = sd['_locked']
-        self._lock_best = sd['_lock_best']
 
 
 # ── Builder ───────────────────────────────────────────────
 
 def build_scheduler(optimizer, train_config, total_steps: int, start_samples: int = 0,
                      pct_start: float = 0.3, plateau_patience: int = 10,
-                     greedy_factor: float = 0.5, lock_steps: int = 3):
+                     greedy_factor: float = 0.5, greedy_beta: float = 0.9,
+                     lock_steps: int = 3):
     """Build (per_step_scheduler, per_checkpoint_scheduler) from TrainConfig.
 
     per_step_scheduler: called every batch (warmup, cosine, onecycle).
@@ -120,7 +127,7 @@ def build_scheduler(optimizer, train_config, total_steps: int, start_samples: in
             optimizer, start_factor=0.1, total_iters=warmup_steps
         ) if warmup_steps > 0 else None
         greedy = GreedyLR(optimizer, factor=greedy_factor,
-                          lock_steps=lock_steps)
+                          beta=greedy_beta, lock_steps=lock_steps)
         return warmup, greedy
 
     return None, None
