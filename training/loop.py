@@ -183,12 +183,13 @@ def run_training(start_samples: int, max_samples: int, model, optimizer, criteri
                             val_loss=None if no_val else avg_val_loss,
                             lr=cur_lr)
 
-                        if stale_checkpoints >= early_stop_patience:
-                            print(f"  Early stop: val loss not improved for "
-                                  f"{early_stop_patience} checkpoints "
-                                  f"(best={best_val_loss:.6f})")
-                            _early_stopped = True
-                            break
+                        # early-stop disabled
+                        # if stale_checkpoints >= early_stop_patience:
+                        #     print(f"  Early stop: val loss not improved for "
+                        #           f"{early_stop_patience} checkpoints "
+                        #           f"(best={best_val_loss:.6f})")
+                        #     _early_stopped = True
+                        #     break
 
                         sum_train_loss = 0.0
                         sum_train_count = 0
