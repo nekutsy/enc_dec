@@ -33,7 +33,7 @@ class GreedyLR:
 
     def __init__(self, optimizer, factor=0.5, beta=0.9, lock_steps=3,
                  probe_patience=3, probe_factor=0.5, probe_lock_steps=3,
-                 probe_threshold=5e-4,
+                 probe_threshold=0.02,
                  cooldown_steps=9,
                  min_lr=1e-7, max_lr=0.1):
         self.optimizer = optimizer
@@ -172,7 +172,7 @@ def build_scheduler(optimizer, train_config, total_steps: int, start_samples: in
                      greedy_factor: float = 0.5, greedy_beta: float = 0.9,
                      lock_steps: int = 3,
                      probe_patience: int = 3, probe_factor: float = 0.5,
-                     probe_threshold: float = 0.0005,
+                     probe_threshold: float = 0.02,
                      probe_lock_steps: int = 3, cooldown_steps: int = 9):
     """Build (per_step_scheduler, per_checkpoint_scheduler) from TrainConfig.
 
