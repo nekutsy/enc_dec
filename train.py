@@ -96,6 +96,8 @@ Examples:
     p.add_argument('--plateau-patience', type=int, default=10,
                    help='Plateau patience (checkpoints)')
     p.add_argument('--num-workers', type=int, default=2)
+    p.add_argument('--checkpoint-interval', type=int, default=250000,
+                   help='Samples between validation/checkpoint passes')
     p.add_argument('--train-ratio', type=float, default=0.999)
 
     # ── Output ──
@@ -160,6 +162,7 @@ Examples:
                 pct_start=args.pct_start,
                 plateau_patience=args.plateau_patience,
                 num_workers=args.num_workers,
+                checkpoint_interval=args.checkpoint_interval,
                 train_ratio=args.train_ratio,
             ),
             sweep=SweepSpec(
@@ -251,6 +254,7 @@ def _cli_to_overrides(overrides):
         'pct_start': 'training.pct_start',
         'plateau_patience': 'training.plateau_patience',
         'num_workers': 'training.num_workers',
+        'checkpoint_interval': 'training.checkpoint_interval',
         'train_ratio': 'training.train_ratio',
         'workspace': 'output.workspace',
         'device': 'output.device',

@@ -57,6 +57,7 @@ class TrainConfig:
     decay_linear_only: bool = True     # True → only Linear weights; False → all params
     early_stop_patience: int = 3
     train_ratio: float = 0.999
+    checkpoint_interval: int = 250_000   # samples between validation/checkpoint passes
     num_workers: int = 2               # DataLoader workers (2 for GPU, 0 for CPU)
 
 

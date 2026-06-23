@@ -626,7 +626,8 @@ def train_one(arch: dict, sweep_config: SweepConfig, model_prefix: str,
             step_scheduler=step_scheduler,
             checkpoint_scheduler=checkpoint_scheduler,
             early_stop_patience=tc.early_stop_patience,
-            no_val=no_val)
+            no_val=no_val,
+            val_interval=tc.checkpoint_interval)
 
         dur = time_mod.time() - t_start
 
