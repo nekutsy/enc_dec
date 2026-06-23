@@ -32,8 +32,9 @@ class GreedyLR:
     """
 
     def __init__(self, optimizer, factor=0.5, beta=0.9, lock_steps=3,
-                 probe_patience=4, probe_factor=0.5, probe_lock_steps=6,
-                 cooldown_steps=12,
+                 probe_patience=3, probe_factor=0.5, probe_lock_steps=3,
+                 probe_threshold=5e-4,
+                 cooldown_steps=9,
                  min_lr=1e-7, max_lr=0.1):
         self.optimizer = optimizer
         self.factor = factor            # γ: controls adjustment aggressiveness
@@ -42,6 +43,7 @@ class GreedyLR:
         self.probe_patience = probe_patience    # flat δ count before probing
         self.probe_factor = probe_factor        # LR multiply on probe
         self.probe_lock_steps = probe_lock_steps  # probe observation window
+        self.probe_threshold = probe_threshold    # |δ| threshold for "flat"
         self.cooldown_steps = cooldown_steps      # cooldown after failed probe
         self.min_lr = min_lr
         self.max_lr = max_lr
@@ -93,8 +95,8 @@ class GreedyLR:
 
         delta = (self._ema - self._prev_ema) / abs(self._prev_ema)
 
-        # Detect plateau: |δ| < 1e-4 (effectively flat)
-        if abs(delta) < 1e-4:
+        # Detect plateau: |δ| < probe_threshold
+        if abs(delta) < self.probe_threshold:
             self._flat_count += 1
             if self._flat_count >= self.probe_patience:
                 self._start_probe()
@@ -169,8 +171,9 @@ def build_scheduler(optimizer, train_config, total_steps: int, start_samples: in
                      pct_start: float = 0.3, plateau_patience: int = 10,
                      greedy_factor: float = 0.5, greedy_beta: float = 0.9,
                      lock_steps: int = 3,
-                     probe_patience: int = 4, probe_factor: float = 0.5,
-                     probe_lock_steps: int = 6, cooldown_steps: int = 12):
+                     probe_patience: int = 3, probe_factor: float = 0.5,
+                     probe_threshold: float = 0.0005,
+                     probe_lock_steps: int = 3, cooldown_steps: int = 9):
     """Build (per_step_scheduler, per_checkpoint_scheduler) from TrainConfig.
 
     per_step_scheduler: called every batch (warmup, cosine, onecycle).
@@ -205,6 +208,7 @@ def build_scheduler(optimizer, train_config, total_steps: int, start_samples: in
         greedy = GreedyLR(optimizer, factor=greedy_factor,
                           beta=greedy_beta, lock_steps=lock_steps,
                           probe_patience=probe_patience, probe_factor=probe_factor,
+                          probe_threshold=probe_threshold,
                           probe_lock_steps=probe_lock_steps, cooldown_steps=cooldown_steps)
         return warmup, greedy
 
