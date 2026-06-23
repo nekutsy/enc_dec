@@ -603,7 +603,7 @@ def train_one(arch: dict, sweep_config: SweepConfig, model_prefix: str,
         lock_steps=tc.greedy_lock_steps,
         probe_patience=tc.greedy_probe_patience,
         probe_factor=tc.greedy_probe_factor,
-        probe_threshold=tc.greedy_probe_threshold,
+        probe_spike_ratio=tc.greedy_probe_spike_ratio,
         probe_lock_steps=tc.greedy_probe_lock,
         cooldown_steps=tc.greedy_cooldown)
     if start_samples > 0 and checkpoint_scheduler is not None:

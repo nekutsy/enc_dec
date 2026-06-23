@@ -18,7 +18,9 @@ class GreedyLR:
          - Loss increased (δ > 0) → LR decreases (retreat when losing)
       4. Clamp multiplier to [1-γ, 1+γ] — protects against outlier changes
       5. Lock for `lock_steps` checkpoints after a decrease to let LR stabilise
-      6. Probe mode: when δ ≈ 0 for `probe_patience` checkpoints, temporarily
+      6. Probe mode: plateau detection via running-minimum staleness
+         (not δ-EMA — immune to single-batch val spikes). When best val
+         hasn't improved for `probe_patience` checkpoints, temporarily
          cut LR by `probe_factor` to test if a lower LR helps. After probe
          lock expires:
          - Improved over pre-probe best → keep lower LR
@@ -32,34 +34,37 @@ class GreedyLR:
     """
 
     def __init__(self, optimizer, factor=0.5, beta=0.9, lock_steps=3,
-                 probe_patience=3, probe_factor=0.5, probe_lock_steps=3,
-                 probe_threshold=0.02,
+                 probe_patience=4, probe_factor=0.5, probe_lock_steps=3,
+                 probe_spike_ratio=2.5,
                  cooldown_steps=3,
                  min_lr=1e-7, max_lr=0.1):
         self.optimizer = optimizer
         self.factor = factor            # γ: controls adjustment aggressiveness
         self.beta = beta                # EMA smoothing coefficient
         self.lock_steps = lock_steps    # lock after LR decrease
-        self.probe_patience = probe_patience    # flat δ count before probing
+        self.probe_patience = probe_patience    # stale chkpts before probing
         self.probe_factor = probe_factor        # LR multiply on probe
         self.probe_lock_steps = probe_lock_steps  # probe observation window
-        self.probe_threshold = probe_threshold    # |δ| threshold for "flat"
+        self.probe_spike_ratio = probe_spike_ratio  # skip probe if val spike > this × best
         self.cooldown_steps = cooldown_steps      # cooldown after failed probe
         self.min_lr = min_lr
         self.max_lr = max_lr
         self._ema = None                # exponential moving average of loss
         self._prev_ema = None           # previous checkpoint's EMA
         self._locked = 0                # remaining lock checkpoints
-        self._flat_count = 0            # consecutive checkpoints with tiny δ
+        self._running_best = float('inf')  # best val in current plateau window
+        self._stale_count = 0           # chkpts since running_best was set
         self._phase = 'normal'          # normal | probing | cooldown
         self._phase_steps = 0           # remaining steps in current phase
-        self._probe_backup = None       # (lr, ema, prev_ema, best_probe_loss)
+        self._probe_backup = None       # (lr, ema, prev_ema, running_best, best_probe_loss)
 
     def step(self, val_loss):
         # Update EMA
         if self._ema is None:
             self._ema = val_loss
             self._prev_ema = self._ema
+            self._running_best = val_loss
+            self._stale_count = 0
             return
         prev_ema = self._ema
         self._ema = self.beta * prev_ema + (1 - self.beta) * val_loss
@@ -76,35 +81,45 @@ class GreedyLR:
             self._prev_ema = self._ema
             if self._phase_steps <= 0:
                 self._phase = 'normal'
-                self._flat_count = 0
+                self._running_best = val_loss
+                self._stale_count = 0
             return
 
         if self._phase == 'probing':
             self._phase_steps -= 1
-            old_lr, old_ema, old_prev_ema, best_probe = self._probe_backup
+            old_lr, old_ema, old_prev_ema, old_best, best_probe = self._probe_backup
             if val_loss < best_probe:
-                self._probe_backup = (old_lr, old_ema, old_prev_ema, val_loss)
+                self._probe_backup = (old_lr, old_ema, old_prev_ema, old_best, val_loss)
             if self._phase_steps <= 0:
                 self._evaluate_probe()
             return
 
-        # ── Normal mode: compute δ ──
+        # ── Normal mode ──
         if self._prev_ema is None or self._prev_ema == 0:
             self._prev_ema = self._ema
             return
 
-        delta = (self._ema - self._prev_ema) / abs(self._prev_ema)
-
-        # Detect plateau: |δ| < probe_threshold
-        if abs(delta) < self.probe_threshold:
-            self._flat_count += 1
-            if self._flat_count >= self.probe_patience:
-                self._start_probe()
-                return
+        # Update running best
+        if val_loss < self._running_best:
+            self._running_best = val_loss
+            self._stale_count = 0
         else:
-            self._flat_count = 0
+            self._stale_count += 1
+
+        # Detect plateau: running best hasn't improved for probe_patience chkpts
+        if self._stale_count >= self.probe_patience:
+            # Suppress probe if last chkpt is a spike (single-batch noise)
+            if val_loss > self._running_best * self.probe_spike_ratio:
+                # Skip probe — this is a spike, not a plateau
+                self._stale_count -= 1  # don't lose the count
+                self._prev_ema = self._ema
+                return
+            self._start_probe()
+            return
 
         # Apply δ-based adjustment
+        delta = (self._ema - self._prev_ema) / abs(self._prev_ema)
+
         multiplier = 1.0 - self.factor * delta
         multiplier = max(1.0 - self.factor, min(1.0 + self.factor, multiplier))
 
@@ -118,10 +133,11 @@ class GreedyLR:
 
     def _start_probe(self):
         lr = self.optimizer.param_groups[0]['lr']
-        self._probe_backup = (lr, self._ema, self._prev_ema, float('inf'))
+        self._probe_backup = (lr, self._ema, self._prev_ema, self._running_best, float('inf'))
         self._phase = 'probing'
         self._phase_steps = self.probe_lock_steps
-        self._flat_count = 0
+        self._running_best = float('inf')
+        self._stale_count = 0
         probe_lr = max(self.min_lr, lr * self.probe_factor)
         for pg in self.optimizer.param_groups:
             pg['lr'] = probe_lr
@@ -131,15 +147,15 @@ class GreedyLR:
         return self._phase != 'normal'
 
     def _evaluate_probe(self):
-        old_lr, old_ema, old_prev_ema, best_probe = self._probe_backup
+        old_lr, old_ema, old_prev_ema, old_best, best_probe = self._probe_backup
         self._probe_backup = None
-        # Compare best probe val against pre-probe EMA — robust to noise
-        if best_probe < float('inf') and best_probe < old_ema:
+        if best_probe < float('inf') and best_probe < old_best:
             # Probe helped — keep lower LR, reset from improved state
-            self._ema = old_ema  # keep continuity with pre-probe EMA
+            self._ema = old_ema
             self._prev_ema = self._ema
             self._phase = 'normal'
-            self._flat_count = 0
+            self._running_best = best_probe
+            self._stale_count = 0
         else:
             # Probe didn't help — restore LR, enter cooldown
             for pg in self.optimizer.param_groups:
@@ -148,13 +164,16 @@ class GreedyLR:
             self._prev_ema = old_prev_ema
             self._phase = 'cooldown'
             self._phase_steps = min(self.cooldown_steps, 3)
+            self._running_best = old_best
+            self._stale_count = self.probe_patience
 
     def state_dict(self):
         return {
             '_ema': self._ema,
             '_prev_ema': self._prev_ema,
             '_locked': self._locked,
-            '_flat_count': self._flat_count,
+            '_running_best': self._running_best,
+            '_stale_count': self._stale_count,
             '_phase': self._phase,
             '_phase_steps': self._phase_steps,
             '_probe_backup': self._probe_backup,
@@ -164,7 +183,8 @@ class GreedyLR:
         self._ema = sd['_ema']
         self._prev_ema = sd['_prev_ema']
         self._locked = sd['_locked']
-        self._flat_count = sd.get('_flat_count', 0)
+        self._running_best = sd.get('_running_best', float('inf'))
+        self._stale_count = sd.get('_stale_count', 0)
         self._phase = sd.get('_phase', 'normal')
         self._phase_steps = sd.get('_phase_steps', 0)
         self._probe_backup = sd.get('_probe_backup', None)
@@ -176,8 +196,8 @@ def build_scheduler(optimizer, train_config, total_steps: int, start_samples: in
                      pct_start: float = 0.3, plateau_patience: int = 10,
                      greedy_factor: float = 0.5, greedy_beta: float = 0.9,
                      lock_steps: int = 3,
-                     probe_patience: int = 3, probe_factor: float = 0.5,
-                     probe_threshold: float = 0.02,
+                     probe_patience: int = 4, probe_factor: float = 0.5,
+                     probe_spike_ratio: float = 2.5,
                      probe_lock_steps: int = 3, cooldown_steps: int = 3):
     """Build (per_step_scheduler, per_checkpoint_scheduler) from TrainConfig.
 
@@ -213,7 +233,7 @@ def build_scheduler(optimizer, train_config, total_steps: int, start_samples: in
         greedy = GreedyLR(optimizer, factor=greedy_factor,
                           beta=greedy_beta, lock_steps=lock_steps,
                           probe_patience=probe_patience, probe_factor=probe_factor,
-                          probe_threshold=probe_threshold,
+                          probe_spike_ratio=probe_spike_ratio,
                           probe_lock_steps=probe_lock_steps, cooldown_steps=cooldown_steps)
         return warmup, greedy
 

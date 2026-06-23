@@ -119,8 +119,6 @@ def run_training(start_samples: int, max_samples: int, model, optimizer, criteri
 
     next_update = total_samples + UPDATE_INTERVAL
     next_log = total_samples + LOG_INTERVAL
-    val_ema = None  # smooth val for noisy schedulers
-    val_beta = 0.7  # EMA smoothing coefficient for val (damps 1-batch spikes)
 
     sys.stderr.write("\r\033[K")
     sys.stderr.flush()
@@ -164,14 +162,8 @@ def run_training(start_samples: int, max_samples: int, model, optimizer, criteri
                         avg_val_loss = _validate(model, val_loader, criterion, device)
                         model.train()
 
-                        # Smooth val for noisy schedulers (1-batch val → huge spikes)
-                        if val_ema is None:
-                            val_ema = avg_val_loss
-                        else:
-                            val_ema = val_beta * val_ema + (1 - val_beta) * avg_val_loss
-
                         if checkpoint_scheduler is not None:
-                            checkpoint_scheduler.step(val_ema)
+                            checkpoint_scheduler.step(avg_val_loss)
 
                         # Early-stopping + best model (always on val loss)
                         if avg_val_loss < best_val_loss:
