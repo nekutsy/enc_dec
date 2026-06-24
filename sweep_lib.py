@@ -337,7 +337,8 @@ def solve_n_for_b(b_val, target_params, input_dim, bottleneck, max_n=20):
 MODEL_LEVEL_VARY = {'normalization', 'activation', 'dropout',
                     'norm_bottleneck', 'norm_last'}
 TRAIN_LEVEL_VARY = {'lr', 'scheduler', 'grad_clip', 'optimizer', 'weight_decay',
-                    'batch_size', 'num_workers', 'greedy_diff_packet'}
+                    'batch_size', 'num_workers', 'greedy_diff_packet',
+                    'greedy_diff_k'}
 
 
 def resolve_architecture(vary_value, vary_name, sweep_config: SweepConfig) -> dict:
