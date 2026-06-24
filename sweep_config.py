@@ -63,6 +63,7 @@ class TrainConfig:
     greedy_diff_k: float = 1.0             # damping coefficient
     greedy_diff_min_lr: float = 1e-7
     greedy_diff_max_lr: float = 0.1
+    greedy_diff_warmup: int = 0             # warmup batches (0 → use warmup_fraction)
     optimizer: str = 'adamw_fused'     # adamw_fused | adamw | sgd | nag | lion | sophia
     weight_decay: float = 0.01
     decay_linear_only: bool = True     # True → only Linear weights; False → all params

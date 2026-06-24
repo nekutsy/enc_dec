@@ -337,7 +337,7 @@ def solve_n_for_b(b_val, target_params, input_dim, bottleneck, max_n=20):
 MODEL_LEVEL_VARY = {'normalization', 'activation', 'dropout',
                     'norm_bottleneck', 'norm_last'}
 TRAIN_LEVEL_VARY = {'lr', 'scheduler', 'grad_clip', 'optimizer', 'weight_decay',
-                    'batch_size', 'num_workers'}
+                    'batch_size', 'num_workers', 'greedy_diff_packet'}
 
 
 def resolve_architecture(vary_value, vary_name, sweep_config: SweepConfig) -> dict:
@@ -610,7 +610,8 @@ def train_one(arch: dict, sweep_config: SweepConfig, model_prefix: str,
         greedy_diff_packet=tc.greedy_diff_packet,
         greedy_diff_k=tc.greedy_diff_k,
         greedy_diff_min_lr=tc.greedy_diff_min_lr,
-        greedy_diff_max_lr=tc.greedy_diff_max_lr)
+        greedy_diff_max_lr=tc.greedy_diff_max_lr,
+        greedy_diff_warmup=tc.greedy_diff_warmup)
     if start_samples > 0 and checkpoint_scheduler is not None:
         load_plat_scheduler(checkpoint_scheduler, model_path)
     if start_samples > 0 and step_scheduler is not None:

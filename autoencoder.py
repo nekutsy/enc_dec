@@ -93,7 +93,8 @@ def main():
         greedy_diff_packet=train_cfg.greedy_diff_packet,
         greedy_diff_k=train_cfg.greedy_diff_k,
         greedy_diff_min_lr=train_cfg.greedy_diff_min_lr,
-        greedy_diff_max_lr=train_cfg.greedy_diff_max_lr)
+        greedy_diff_max_lr=train_cfg.greedy_diff_max_lr,
+        greedy_diff_warmup=train_cfg.greedy_diff_warmup)
 
     print(f'Training 30 epochs ({train_cfg.target_samples:,} samples)...')
     try:

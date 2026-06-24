@@ -1,0 +1,44 @@
+{
+  "name": "greedy_diff_packet_sweep",
+  "model": {
+    "seq_len": 128,
+    "activation": "silu",
+    "normalization": "batchnorm",
+    "init_gain": 1.0,
+    "dropout": 0.0,
+    "norm_bottleneck": false,
+    "norm_last": false
+  },
+  "training": {
+    "target_samples": 3000000,
+    "batch_size": 256,
+    "lr": 0.0005,
+    "grad_clip": 1.0,
+    "scheduler": "greedy_diff",
+    "warmup_fraction": 0.0,
+    "optimizer": "adamw_fused",
+    "weight_decay": 0.01,
+    "early_stop_patience": 999,
+    "train_ratio": 0.999,
+    "num_workers": 2,
+    "checkpoint_interval": 100000,
+    "greedy_diff_d": 1,
+    "greedy_diff_k": 1.0,
+    "greedy_diff_min_lr": 1e-07,
+    "greedy_diff_max_lr": 0.1,
+    "greedy_diff_warmup": 1953
+  },
+  "sweep": {
+    "strategy": "grid",
+    "vary": "greedy_diff_packet",
+    "values": [10, 100, 500],
+    "solve": "b",
+    "budget": 384000000,
+    "fixed": {"n": 8}
+  },
+  "output": {
+    "workspace": "sessions/greedy_diff_sweep",
+    "sweep_log": "sessions/greedy_diff_sweep_summary.csv",
+    "device": "auto"
+  }
+}

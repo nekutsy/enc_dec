@@ -215,14 +215,17 @@ class GreedyDiffLR:
     uses_loss = True  # signals step_batch to feed loss value
 
     def __init__(self, optimizer, d=10, packet_size=100, k=1.0,
-                 min_lr=1e-7, max_lr=0.1, warmup_packets=None):
+                 min_lr=1e-7, max_lr=0.1,
+                 warmup_steps=0, warmup_start_factor=0.1):
         self.optimizer = optimizer
         self.d = max(1, d)                          # measurement spacing (packets)
         self.packet_size = max(1, packet_size)       # batches per packet
         self.k = k                                    # damping coefficient
         self.min_lr = min_lr
         self.max_lr = max_lr
-        self.warmup_packets = warmup_packets if warmup_packets is not None else 3 * d
+        self.warmup_steps = warmup_steps
+        self.warmup_start_factor = warmup_start_factor
+        self._base_lr = optimizer.param_groups[0]['lr']
 
         self._losses = []           # avg loss per packet, indexed by packet idx
         self._D_values = {}         # packet_idx -> D value
@@ -230,9 +233,15 @@ class GreedyDiffLR:
         self._loss_sum = 0.0
         self._loss_count = 0
         self._p = 0                 # current packet index
+        self._step = 0              # batch count (for warmup tracking)
+
+        if warmup_steps > 0:
+            for pg in self.optimizer.param_groups:
+                pg['lr'] = self._base_lr * warmup_start_factor
 
     def step(self, loss):
         """Feed a single batch loss; adjusts LR at packet boundaries."""
+        self._step += 1
         self._loss_sum += loss
         self._loss_count += 1
         if self._loss_count < self.packet_size:
@@ -262,6 +271,15 @@ class GreedyDiffLR:
             if D_pd is not None and D_p2d is not None:
                 self._Dprime_values[p - d] = (D_pd - D_p2d) / d
 
+        # Warmup: linear ramp, packets still collected but LR not adjusted
+        if self._step < self.warmup_steps:
+            progress = self._step / max(1, self.warmup_steps)
+            lr = self._base_lr * (self.warmup_start_factor
+                                   + (1.0 - self.warmup_start_factor) * progress)
+            for pg in self.optimizer.param_groups:
+                pg['lr'] = lr
+            return
+
         # Apply: lr = lr * (1 + k * D'(p-d))
         if p >= 3 * d:
             Dprime = self._Dprime_values.get(p - d)
@@ -278,6 +296,8 @@ class GreedyDiffLR:
             '_loss_sum': self._loss_sum,
             '_loss_count': self._loss_count,
             '_p': self._p,
+            '_step': self._step,
+            '_base_lr': self._base_lr,
         }
 
     def load_state_dict(self, sd):
@@ -287,6 +307,8 @@ class GreedyDiffLR:
         self._loss_sum = sd.get('_loss_sum', 0.0)
         self._loss_count = sd.get('_loss_count', 0)
         self._p = sd.get('_p', len(self._losses))
+        self._step = sd.get('_step', self._p * self.packet_size)
+        self._base_lr = sd.get('_base_lr', self._base_lr)
 
 
 # ── Builder ───────────────────────────────────────────────
@@ -301,7 +323,8 @@ def build_scheduler(optimizer, train_config, total_steps: int, start_samples: in
                      greedy_diff_d: int = 10, greedy_diff_packet: int = 100,
                      greedy_diff_k: float = 1.0,
                      greedy_diff_min_lr: float = 1e-7,
-                     greedy_diff_max_lr: float = 0.1):
+                     greedy_diff_max_lr: float = 0.1,
+                     greedy_diff_warmup: int = 0):
     """Build (per_step_scheduler, per_checkpoint_scheduler) from TrainConfig.
 
     per_step_scheduler: called every batch (warmup, cosine, onecycle).
@@ -341,10 +364,15 @@ def build_scheduler(optimizer, train_config, total_steps: int, start_samples: in
         return warmup, greedy
 
     if scheduler == "greedy_diff":
-        # No external warmup — GreedyDiffLR has built-in warmup_packets delay
+        wsteps = greedy_diff_warmup
+        if wsteps == 0:
+            wsteps = warmup_steps  # fallback: use warmup_fraction
+        if start_samples > 0:
+            wsteps = 0  # skip warmup on resume
         gd = GreedyDiffLR(
             optimizer, d=greedy_diff_d, packet_size=greedy_diff_packet,
             k=greedy_diff_k, min_lr=greedy_diff_min_lr, max_lr=greedy_diff_max_lr,
+            warmup_steps=wsteps,
         )
         return gd, None
 
