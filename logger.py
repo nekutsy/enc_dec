@@ -174,17 +174,17 @@ class TrainingLogger:
 
     def log_checkpoint(self, total_samples: int, train_loss: float,
                        epoch_size: int, val_loss: float | None = None,
-                       lr: float | None = None):
+                       lr: float | None = None, debug: dict | None = None):
         """Full checkpoint: write CSV + print formatted stdout line."""
         row = self.on_checkpoint(total_samples, train_loss, epoch_size, val_loss, lr)
-        print(self.format_line(row), flush=True)
+        print(self.format_line(row, debug=debug), flush=True)
 
     def log_final(self, total_samples: int, train_loss: float, epoch_size: int,
                   status: str = 'done', duration_seconds: float = 0.0,
-                  val_loss: float | None = None):
+                  val_loss: float | None = None, debug: dict | None = None):
         """Write final checkpoint and return summary dict for global CSV."""
         row = self.on_checkpoint(total_samples, train_loss, epoch_size, val_loss)
-        print(self.format_line(row), flush=True)
+        print(self.format_line(row, debug=debug), flush=True)
         return row
 
     # ── Formatting ───────────────────────────────────────────
@@ -194,7 +194,7 @@ class TrainingLogger:
         v = row.get(key, '')
         return v is not None and v != ''
 
-    def format_line(self, row: dict) -> str:
+    def format_line(self, row: dict, debug: dict | None = None) -> str:
         """Format a checkpoint row as a single-line string."""
         parts = []
         cfg = self.config
@@ -213,13 +213,18 @@ class TrainingLogger:
         if 'lr' in row and cfg.lr and self._is_present(row, 'lr'):
             v = row['lr']
             parts.append(f'lr={v:.2e}' if isinstance(v, float) else f'lr={v}')
+        if debug:
+            parts.append(f'D={debug["D"]:.2e}' if debug.get('D') is not None else 'D=--')
+            parts.append(f"D'={debug['Dprime']:.2e}" if debug.get('Dprime') is not None else "D'=--")
+            parts.append(f'm={debug["mult"]:.4f}')
 
         ts = time_mod.strftime('%Y-%m-%d %H:%M:%S')
         name_str = f'{self.model_name} | ' if self.model_name else ''
         return f'{ts} | {name_str}{" | ".join(parts)}'
 
     def format_progress(self, total_samples: int, max_samples: int,
-                        loss: float, epoch_size: int, lr: float | None = None) -> str:
+                        loss: float, epoch_size: int, lr: float | None = None,
+                        debug: dict | None = None) -> str:
         """Format a progress line for stderr (in-place updates)."""
         now = time_mod.time()
         speed = 0.0
@@ -232,6 +237,12 @@ class TrainingLogger:
                 f'loss={loss:.6f} | speed={speed:.0f} sps')
         if lr is not None:
             line += f' | lr={lr:.2e}'
+        if debug:
+            if debug.get('D') is not None:
+                line += f' | D={debug["D"]:.2e}'
+            if debug.get('Dprime') is not None:
+                line += f" | D'={debug['Dprime']:.2e}"
+            line += f' | m={debug["mult"]:.4f}'
         return line
 
     @property

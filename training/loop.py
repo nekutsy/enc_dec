@@ -151,8 +151,12 @@ def run_training(start_samples: int, max_samples: int, model, optimizer, criteri
                     if total_samples >= next_update:
                         avg_loss = sum_train_loss / sum_train_count if sum_train_count > 0 else 0
                         cur_lr = optimizer.param_groups[0]['lr']
+                        debug = None
+                        if step_scheduler is not None and hasattr(step_scheduler, 'get_debug_info'):
+                            debug = step_scheduler.get_debug_info()
                         line = train_logger.format_progress(
-                            total_samples, max_samples, avg_loss, epoch_size, lr=cur_lr)
+                            total_samples, max_samples, avg_loss, epoch_size,
+                            lr=cur_lr, debug=debug)
                         sys.stderr.write(line)
                         sys.stderr.flush()
                         next_update = total_samples + UPDATE_INTERVAL
@@ -180,10 +184,13 @@ def run_training(start_samples: int, max_samples: int, model, optimizer, criteri
                             stale_checkpoints += 1
 
                         cur_lr = optimizer.param_groups[0]['lr']
+                        debug = None
+                        if step_scheduler is not None and hasattr(step_scheduler, 'get_debug_info'):
+                            debug = step_scheduler.get_debug_info()
                         train_logger.log_checkpoint(
                             total_samples, avg_train_loss, epoch_size,
                             val_loss=None if no_val else avg_val_loss,
-                            lr=cur_lr)
+                            lr=cur_lr, debug=debug)
 
                         # early-stop disabled
                         # if stale_checkpoints >= early_stop_patience:
@@ -215,10 +222,13 @@ def run_training(start_samples: int, max_samples: int, model, optimizer, criteri
         avg_train_loss = sum_train_loss / sum_train_count
         avg_val_loss = _validate(model, val_loader, criterion, device)
         cur_lr = optimizer.param_groups[0]['lr']
+        debug = None
+        if step_scheduler is not None and hasattr(step_scheduler, 'get_debug_info'):
+            debug = step_scheduler.get_debug_info()
         train_logger.log_checkpoint(
             total_samples, avg_train_loss, epoch_size,
             val_loss=None if no_val else avg_val_loss,
-            lr=cur_lr)
+            lr=cur_lr, debug=debug)
 
     save_checkpoint(model, optimizer, model_path,
                     checkpoint_scheduler=checkpoint_scheduler,

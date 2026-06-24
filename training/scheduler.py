@@ -285,8 +285,27 @@ class GreedyDiffLR:
             Dprime = self._Dprime_values.get(p - d)
             if Dprime is not None:
                 mult = 1.0 + self.k * Dprime
+                self._last_mult = mult
                 for pg in self.optimizer.param_groups:
                     pg['lr'] = max(self.min_lr, min(self.max_lr, pg['lr'] * mult))
+
+    def get_debug_info(self) -> dict | None:
+        """Return latest D, D', multiplier for debug logging. None if no data yet."""
+        p = self._p
+        d = self.d
+        D_val = self._D_values.get(p - 1) if p > 0 else None
+        Dprime_val = None
+        if p >= 2 * d:
+            Dprime_val = self._Dprime_values.get(p - d)
+        elif hasattr(self, '_last_mult'):
+            pass  # Dprime computed once, rewarmup not needed
+        if D_val is None and not hasattr(self, '_last_mult'):
+            return None
+        return {
+            'D': D_val,
+            'Dprime': Dprime_val,
+            'mult': getattr(self, '_last_mult', 1.0),
+        }
 
     def state_dict(self):
         return {
