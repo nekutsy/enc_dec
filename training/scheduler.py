@@ -276,6 +276,7 @@ class GreedyDiffLR:
             progress = self._step / max(1, self.warmup_steps)
             lr = self._base_lr * (self.warmup_start_factor
                                    + (1.0 - self.warmup_start_factor) * progress)
+            self._last_mult = lr / self._base_lr
             for pg in self.optimizer.param_groups:
                 pg['lr'] = lr
             return
@@ -295,10 +296,8 @@ class GreedyDiffLR:
         d = self.d
         D_val = self._D_values.get(p - 1) if p > 0 else None
         Dprime_val = None
-        if p >= 2 * d:
-            Dprime_val = self._Dprime_values.get(p - d)
-        elif hasattr(self, '_last_mult'):
-            pass  # Dprime computed once, rewarmup not needed
+        if p > 2 * d:
+            Dprime_val = self._Dprime_values.get(p - 1 - d)
         if D_val is None and not hasattr(self, '_last_mult'):
             return None
         return {
@@ -317,6 +316,7 @@ class GreedyDiffLR:
             '_p': self._p,
             '_step': self._step,
             '_base_lr': self._base_lr,
+            '_last_mult': getattr(self, '_last_mult', 1.0),
         }
 
     def load_state_dict(self, sd):
