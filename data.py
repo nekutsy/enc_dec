@@ -7,6 +7,15 @@ import torch
 from torch.utils.data import Dataset
 
 from configs import UNICODE_BITS
+from encoding.unicode21 import (
+    chars_to_bits,
+    bits_to_chars as _bits_to_chars,
+    seq_to_vec,
+    vec_to_seq,
+    split_into_chunks,
+    pack_bits_uint8,
+    unpack_uint8_to_float,
+)
 
 FULL_BITS_CACHE = "data/cache/full_bits.u8"   # uint8 packed — 8 bits/byte (~0.13 GB)
 OLD_FLOAT_CACHE = "data/cache/full_bits.pt"   # legacy float32 (auto-migrated)
@@ -35,30 +44,9 @@ def load_text(data_dir="data/dataset", verbose=False):
     return "".join(texts)
 
 
-def _pack_bits_uint8(codes: np.ndarray) -> np.ndarray:
-    """Pack Unicode codepoint bits into uint8: 8 bits per byte, little-endian.
-
-    codes: (N,) uint32 → packed uint8 with ceil(N*UNICODE_BITS/8) bytes.
-    """
-    total_bits = len(codes) * UNICODE_BITS
-    bits = np.zeros(total_bits, dtype=np.uint8)
-    for i in range(UNICODE_BITS):
-        bits[i::UNICODE_BITS] = (codes >> (UNICODE_BITS - 1 - i)) & 1
-    n_padded = ((total_bits + 7) // 8) * 8
-    padded = np.zeros(n_padded, dtype=np.uint8)
-    padded[:total_bits] = bits
-    return np.packbits(padded.reshape(-1, 8), axis=1, bitorder='little').ravel()
-
-
-def _unpack_uint8_to_float(packed, total_bits: int) -> torch.Tensor:
-    """Unpack uint8 → float32 tensor of exact 0.0/1.0 values."""
-    if isinstance(packed, torch.Tensor):
-        packed = packed.cpu().numpy()
-    packed = np.asarray(packed, dtype=np.uint8)
-    if len(packed) == 0:
-        return torch.zeros(total_bits, dtype=torch.float32)
-    unpacked = np.unpackbits(packed, bitorder='little')
-    return torch.from_numpy(unpacked[:total_bits].astype(np.float32))
+# Re-exported from encoding.unicode21 for backward compatibility
+_pack_bits_uint8 = pack_bits_uint8
+_unpack_uint8_to_float = unpack_uint8_to_float
 
 
 def _build_full_bits(text):
@@ -128,42 +116,11 @@ class SlidingWindowDataset(Dataset):
         return w, w
 
 
-def chars_to_bits(codes: np.ndarray) -> np.ndarray:
-    """Vectorized: (N,) uint32 codepoints → (N, UNICODE_BITS) float32 bits."""
-    bits = np.zeros((len(codes), UNICODE_BITS), dtype=np.float32)
-    for i in range(UNICODE_BITS):
-        bits[:, i] = (codes >> (UNICODE_BITS - 1 - i)) & 1
-    return bits
-
-
-def seq2vec(seq: str, max_bits: int):
-    max_symbols = max_bits // UNICODE_BITS
-    codes = np.array([ord(ch) for ch in seq[:max_symbols]], dtype=np.uint32)
-    used = len(codes)
-    bits = np.zeros(max_bits, dtype=np.float32)
-    if used > 0:
-        bits[:used * UNICODE_BITS] = chars_to_bits(codes).ravel()
-    return bits.tolist(), used
-
-
-def vec2seq(vec):
-    arr = np.asarray(vec, dtype=np.float32).reshape(-1, UNICODE_BITS)
-    powers = 2 ** np.arange(UNICODE_BITS - 1, -1, -1)
-    codepoints = ((arr > 0.5) @ powers).astype(int)
-    valid_codes = codepoints[codepoints > 0]
-    return ''.join(chr(c) for c in valid_codes)
-
-
-def split_into_chunks(text: str, max_bits: int):
-    chunks = []
-    i = 0
-    max_symbols = max_bits // UNICODE_BITS
-    while i < len(text):
-        chunk_text = text[i:i + max_symbols]
-        bits, used = seq2vec(chunk_text, max_bits)
-        chunks.append((chunk_text, bits))
-        i += used
-    return chunks
+# Re-exported from encoding.unicode21 for backward compatibility
+chars_to_bits = chars_to_bits  # already imported above
+vec2seq = vec_to_seq
+seq2vec = seq_to_vec
+split_into_chunks = split_into_chunks
 
 
 def prepare_data(text: str, seq_len: int, train_ratio: float = 0.99):

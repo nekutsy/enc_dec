@@ -1,3 +1,6 @@
-"""Constants for the enc_dec pipeline."""
+"""Re-exports for backward compatibility.
 
-UNICODE_BITS = 21  # bits per character in unicode-21 encoding
+UNICODE_BITS is now defined in encoding.unicode21.
+"""
+
+from encoding.unicode21 import UNICODE_BITS  # noqa: F401
