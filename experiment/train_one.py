@@ -202,24 +202,7 @@ def train_one(arch: dict, sweep_config: SweepConfig, model_prefix: str,
         start_samples = get_last_samples(csv_path)
 
     step_scheduler, checkpoint_scheduler = build_scheduler(
-        optimizer, tc, total_batches, start_samples=start_samples,
-        pct_start=tc.pct_start,
-        plateau_patience=tc.plateau_patience,
-        greedy_factor=tc.greedy_factor,
-        greedy_beta=tc.greedy_beta,
-        lock_steps=tc.greedy_lock_steps,
-        probe_patience=tc.greedy_probe_patience,
-        probe_factor=tc.greedy_probe_factor,
-        probe_spike_ratio=tc.greedy_probe_spike_ratio,
-        probe_lock_steps=tc.greedy_probe_lock,
-        cooldown_steps=tc.greedy_cooldown,
-        greedy_diff_d=tc.greedy_diff_d,
-        greedy_diff_packet=tc.greedy_diff_packet,
-        greedy_diff_k=tc.greedy_diff_k,
-        greedy_diff_min_lr=tc.greedy_diff_min_lr,
-        greedy_diff_max_lr=tc.greedy_diff_max_lr,
-        greedy_diff_warmup=tc.greedy_diff_warmup,
-    )
+        optimizer, tc, total_batches, start_samples=start_samples)
     if start_samples > 0 and checkpoint_scheduler is not None:
         load_plat_scheduler(checkpoint_scheduler, ckpt_path)
     if start_samples > 0 and step_scheduler is not None:

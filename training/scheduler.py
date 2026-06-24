@@ -351,18 +351,8 @@ class GreedyDiffLR:
 
 # ── Builder ───────────────────────────────────────────────
 
-def build_scheduler(optimizer, train_config, total_steps: int, start_samples: int = 0,
-                     pct_start: float = 0.3, plateau_patience: int = 10,
-                     greedy_factor: float = 0.5, greedy_beta: float = 0.9,
-                     lock_steps: int = 3,
-                     probe_patience: int = 4, probe_factor: float = 0.5,
-                     probe_spike_ratio: float = 2.5,
-                     probe_lock_steps: int = 3, cooldown_steps: int = 3,
-                     greedy_diff_d: int = 10, greedy_diff_packet: int = 100,
-                     greedy_diff_k: float = 1.0,
-                     greedy_diff_min_lr: float = 1e-7,
-                     greedy_diff_max_lr: float = 0.1,
-                     greedy_diff_warmup: int = 0):
+def build_scheduler(optimizer, train_config, total_steps: int,
+                     start_samples: int = 0):
     """Build (per_step_scheduler, per_checkpoint_scheduler) from TrainConfig.
 
     per_step_scheduler: called every batch (warmup, cosine, onecycle).
@@ -371,13 +361,13 @@ def build_scheduler(optimizer, train_config, total_steps: int, start_samples: in
 
     If start_samples > 0 (resume): warmup phase is skipped.
     """
-    scheduler = train_config.scheduler
+    tc = train_config
+    scheduler = tc.scheduler
     if scheduler == 'none':
         return None, None
 
     total_steps = max(total_steps, 1)
-    warmup_steps = int(train_config.warmup_fraction * total_steps)
-
+    warmup_steps = int(tc.warmup_fraction * total_steps)
     if start_samples > 0:
         warmup_steps = 0  # skip warmup on resume
 
@@ -385,32 +375,36 @@ def build_scheduler(optimizer, train_config, total_steps: int, start_samples: in
         return _build_cosine(optimizer, warmup_steps, total_steps)
 
     if scheduler == "plateau":
-        return _build_plateau(optimizer, warmup_steps, plateau_patience)
+        return _build_plateau(optimizer, warmup_steps, tc.plateau_patience)
 
     if scheduler == "onecycle":
-        return _build_onecycle(optimizer, train_config.lr, total_steps, pct_start), None
+        return _build_onecycle(optimizer, tc.lr, total_steps, tc.pct_start), None
 
     if scheduler == "greedy":
         warmup = torch.optim.lr_scheduler.LinearLR(
             optimizer, start_factor=0.1, total_iters=warmup_steps
         ) if warmup_steps > 0 else None
-        greedy = GreedyLR(optimizer, factor=greedy_factor,
-                          beta=greedy_beta, lock_steps=lock_steps,
-                          probe_patience=probe_patience, probe_factor=probe_factor,
-                          probe_spike_ratio=probe_spike_ratio,
-                          probe_lock_steps=probe_lock_steps, cooldown_steps=cooldown_steps)
+        greedy = GreedyLR(
+            optimizer, factor=tc.greedy_factor, beta=tc.greedy_beta,
+            lock_steps=tc.greedy_lock_steps,
+            probe_patience=tc.greedy_probe_patience,
+            probe_factor=tc.greedy_probe_factor,
+            probe_spike_ratio=tc.greedy_probe_spike_ratio,
+            probe_lock_steps=tc.greedy_probe_lock,
+            cooldown_steps=tc.greedy_cooldown,
+        )
         return warmup, greedy
 
     if scheduler == "greedy_diff":
-        wsteps = greedy_diff_warmup
+        wsteps = tc.greedy_diff_warmup
         if wsteps == 0:
             wsteps = warmup_steps  # fallback: use warmup_fraction
         if start_samples > 0:
             wsteps = 0  # skip warmup on resume
         gd = GreedyDiffLR(
-            optimizer, d=greedy_diff_d, packet_size=greedy_diff_packet,
-            k=greedy_diff_k, min_lr=greedy_diff_min_lr, max_lr=greedy_diff_max_lr,
-            warmup_steps=wsteps,
+            optimizer, d=tc.greedy_diff_d, packet_size=tc.greedy_diff_packet,
+            k=tc.greedy_diff_k, min_lr=tc.greedy_diff_min_lr,
+            max_lr=tc.greedy_diff_max_lr, warmup_steps=wsteps,
         )
         return gd, None
 
