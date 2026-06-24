@@ -95,6 +95,7 @@ class TrainingLogger:
         self.ema_decay = ema_decay
         self.model_name = model_name
         os.makedirs(os.path.dirname(csv_path) or '.', exist_ok=True)
+        self.log_path = csv_path.replace('.csv', '.log')
 
         # Internal state
         self._ema_loss: float | None = None
@@ -175,9 +176,12 @@ class TrainingLogger:
     def log_checkpoint(self, total_samples: int, train_loss: float,
                        epoch_size: int, val_loss: float | None = None,
                        lr: float | None = None, debug: dict | None = None):
-        """Full checkpoint: write CSV + print formatted stdout line."""
+        """Full checkpoint: write CSV + .log + print formatted stdout line."""
         row = self.on_checkpoint(total_samples, train_loss, epoch_size, val_loss, lr)
-        print(self.format_line(row, debug=debug), flush=True)
+        line = self.format_line(row, debug=debug)
+        print(line, flush=True)
+        with open(self.log_path, 'a') as f:
+            f.write(line + '\n')
 
     def log_final(self, total_samples: int, train_loss: float, epoch_size: int,
                   status: str = 'done', duration_seconds: float = 0.0,
@@ -285,6 +289,7 @@ class GlobalLogger:
         self.csv_path = csv_path
         self.columns = columns or GLOBAL_COLUMNS
         os.makedirs(os.path.dirname(csv_path) or '.', exist_ok=True)
+        self.log_path = csv_path.replace('.csv', '.log')
 
     def init(self):
         """Create CSV with header if it doesn't exist."""
@@ -293,10 +298,31 @@ class GlobalLogger:
                 csv.writer(f).writerow(self.columns)
 
     def log_result(self, row_dict: dict):
-        """Append a result row to the global CSV."""
+        """Append a result row to the global CSV + human-readable .log."""
         with open(self.csv_path, 'a', newline='') as f:
             writer = csv.DictWriter(f, fieldnames=self.columns)
             writer.writerow(row_dict)
+        line = self._format_human(row_dict)
+        with open(self.log_path, 'a') as f:
+            f.write(line + '\n')
+
+    @staticmethod
+    def _format_human(row: dict) -> str:
+        """Format a result row as a human-readable line."""
+        ts = time_mod.strftime('%Y-%m-%d %H:%M:%S')
+        exp = row.get('experiment', '')
+        model = row.get('model_name', '')
+        label = f'{exp}/{model}' if model else exp
+        loss = row.get('final_train_loss', '')
+        params = row.get('params', '')
+        samples = row.get('total_samples', '')
+        status = row.get('status', '')
+        dur = row.get('duration_seconds', '')
+        parts = [ts, label, f'loss={loss}', f'params={params}',
+                 f'samples={samples}', status]
+        if dur:
+            parts.append(f'{dur}s')
+        return ' | '.join(str(p) for p in parts)
 
     def get_completed(self, target_samples: int, seq_len: int | None = None
                       ) -> dict:
