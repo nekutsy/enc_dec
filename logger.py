@@ -29,7 +29,7 @@ class LoggerConfig:
     train_loss: bool = True      # interval average loss
     train_loss_ema: bool = True  # EMA-smoothed loss (β=0.95)
     val_loss: bool = True
-    lr: bool = False
+    lr: bool = True
 
     @classmethod
     def all_off(cls) -> 'LoggerConfig':
@@ -219,7 +219,7 @@ class TrainingLogger:
         return f'{ts} | {name_str}{" | ".join(parts)}'
 
     def format_progress(self, total_samples: int, max_samples: int,
-                        loss: float, epoch_size: int) -> str:
+                        loss: float, epoch_size: int, lr: float | None = None) -> str:
         """Format a progress line for stderr (in-place updates)."""
         now = time_mod.time()
         speed = 0.0
@@ -230,6 +230,8 @@ class TrainingLogger:
         self._prog_last_samples = total_samples
         line = (f'\r\033[Ksamples={total_samples:>11,} | '
                 f'loss={loss:.6f} | speed={speed:.0f} sps')
+        if lr is not None:
+            line += f' | lr={lr:.2e}'
         return line
 
     @property

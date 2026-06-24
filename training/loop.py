@@ -150,8 +150,9 @@ def run_training(start_samples: int, max_samples: int, model, optimizer, criteri
                     # ── Progress (stderr, in-place) ──
                     if total_samples >= next_update:
                         avg_loss = sum_train_loss / sum_train_count if sum_train_count > 0 else 0
+                        cur_lr = optimizer.param_groups[0]['lr']
                         line = train_logger.format_progress(
-                            total_samples, max_samples, avg_loss, epoch_size)
+                            total_samples, max_samples, avg_loss, epoch_size, lr=cur_lr)
                         sys.stderr.write(line)
                         sys.stderr.flush()
                         next_update = total_samples + UPDATE_INTERVAL
