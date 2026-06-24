@@ -27,7 +27,7 @@ class LoggerConfig:
     total_samples: bool = True
     speed_sps: bool = True       # samples/sec over last interval
     train_loss: bool = True      # interval average loss
-    train_loss_ema: bool = True  # EMA-smoothed loss (β=0.95)
+    train_loss_ema: bool = False  # EMA-smoothed loss (β=0.95)
     val_loss: bool = True
     lr: bool = True
 
