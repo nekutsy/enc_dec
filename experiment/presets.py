@@ -18,7 +18,6 @@ def preset_ratio(budget_m: int) -> SweepConfig:
         ),
         output=OutputConfig(
             workspace=f'sessions/ratio{budget_m}',
-            sweep_log=f'sessions/ratio{budget_m}_sweep_summary.csv',
         ),
     )
 
@@ -35,7 +34,6 @@ def preset_binary() -> SweepConfig:
         ),
         output=OutputConfig(
             workspace='sessions/sweep',
-            sweep_log='sessions/sweep_binary_summary.csv',
         ),
     )
 
@@ -54,7 +52,6 @@ def preset_width(seq_len: int = 32, n_hidden: int = 7) -> SweepConfig:
         ),
         output=OutputConfig(
             workspace='sessions/width',
-            sweep_log='sessions/width_sweep_summary.csv',
         ),
     )
 
@@ -74,6 +71,5 @@ def preset_batch(budget_m: int = 20, n_hidden: int = 3) -> SweepConfig:
         ),
         output=OutputConfig(
             workspace=f'sessions/ratio{budget_m}',
-            sweep_log=f'sessions/batch_sweep_{budget_m}m.csv',
         ),
     )

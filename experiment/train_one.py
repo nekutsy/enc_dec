@@ -30,18 +30,16 @@ from experiment.context import RuntimeContext
 
 # ── Helpers ────────────────────────────────────────────────
 
-def save_paths(layer_sizes: list[int], model_name: str,
-               prefix: str = 'sessions') -> tuple[str, str]:
-    """Return (model_path, csv_path) for a given layer configuration."""
-    mid = len(layer_sizes) // 2
-    key = '_'.join(map(str, layer_sizes[:mid + 1]))
-    if len(key) > 200:
-        import hashlib
-        key = hashlib.md5(key.encode()).hexdigest()[:16]
-    base = f'{key}_{model_name}'
-    os.makedirs(prefix, exist_ok=True)
-    return (os.path.join(prefix, f'{base}.pth'),
-            os.path.join(prefix, f'training_losses_{base}.csv'))
+def save_paths(model_name: str, prefix: str = 'sessions') -> tuple[str, str, str]:
+    """Return (model_path, csv_path, model_dir) — dir-per-model.
+
+    Creates: {prefix}/{model_name}/model.pth, log.csv
+    """
+    model_dir = os.path.join(prefix, model_name)
+    os.makedirs(model_dir, exist_ok=True)
+    return (os.path.join(model_dir, 'model.pth'),
+            os.path.join(model_dir, 'log.csv'),
+            model_dir)
 
 
 def compile_model(model, device):
@@ -65,16 +63,16 @@ def compile_model(model, device):
         return model
 
 
-def _train_setup(model, optimizer, csv_path, model_path, device):
+def _train_setup(model, optimizer, csv_path, model_path, model_dir, device):
     """Load checkpoint if available → (start_samples, effective_path)."""
     start_samples = get_last_samples(csv_path)
     effective_path = model_path
     if start_samples > 0:
         if not os.path.isfile(effective_path):
-            best_path = model_path.replace('.pth', '_best.pth')
+            best_path = os.path.join(model_dir, 'best.pth')
             if os.path.isfile(best_path):
                 effective_path = best_path
-                print('  Using _best checkpoint (main .pth missing)')
+                print('  Using best checkpoint (model.pth missing)')
         if not os.path.isfile(effective_path):
             print('  No checkpoint found — starting from scratch')
             return 0, model_path
@@ -141,7 +139,23 @@ def train_one(arch: dict, sweep_config: SweepConfig, model_prefix: str,
     target_samples = tc.target_samples
     bs = tc.batch_size
 
-    model_path, csv_path = save_paths(sizes, model_prefix, prefix=ws)
+    model_path, csv_path, model_dir = save_paths(model_prefix, prefix=ws)
+
+    # Write meta.json
+    import json
+    meta = {
+        'layer_sizes': sizes,
+        'n_params': n_params,
+        'seq_len': seq_len,
+        'bottleneck': bottleneck,
+        'n_hidden': arch['n'],
+        'experiment': os.path.basename(ws),
+        'model_name': model_prefix,
+    }
+    from datetime import datetime, timezone
+    meta['created'] = datetime.now(timezone.utc).isoformat()
+    with open(os.path.join(model_dir, 'model.meta.json'), 'w') as f:
+        json.dump(meta, f, indent=2)
 
     arch_str = '→'.join(str(s) for s in sizes)
     print(f'  arch: {arch_str}')
@@ -196,7 +210,7 @@ def train_one(arch: dict, sweep_config: SweepConfig, model_prefix: str,
 
     total_batches = int(target_samples / bs) + 1
     start_samples, ckpt_path = _train_setup(
-        model, optimizer, csv_path, model_path, device)
+        model, optimizer, csv_path, model_path, model_dir, device)
     if resume_lr_reset:
         print('  Starting fresh optimizer (LR reset)')
         start_samples = get_last_samples(csv_path)
@@ -240,11 +254,13 @@ def train_one(arch: dict, sweep_config: SweepConfig, model_prefix: str,
         print(f'  done: {final_samples:,} samples in {dur:.0f}s '
               f'({speed_avg:,.0f} sps)  train={final_train_loss:.6f}')
 
-        # Global summary
+        # Global summary (sessions/global.csv)
         if global_logger is not None:
             epoch = (final_samples / len(train_ds)
                      if len(train_ds) > 0 else 0.0)
-            global_logger.log_result({
+            result = {
+                'experiment': os.path.basename(ws),
+                'model_name': model_prefix,
                 'sweep_type': sweep_config.sweep.strategy,
                 'vary_param': sweep_config.sweep.vary,
                 'vary_value': (
@@ -266,7 +282,12 @@ def train_one(arch: dict, sweep_config: SweepConfig, model_prefix: str,
                 'speed_avg_sps': round(speed_avg, 1),
                 'status': 'done',
                 'duration_seconds': round(dur, 1),
-            })
+            }
+            global_logger.log_result(result)
+            # Also write sweep-local summary
+            local_logger = GlobalLogger(os.path.join(ws, 'summary.csv'))
+            local_logger.init()
+            local_logger.log_result(result)
 
         train_done = (final_train_loss, 'done', final_samples)
 

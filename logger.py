@@ -259,6 +259,7 @@ class TrainingLogger:
 # ── GlobalLogger — sweep-level summary ────────────────────────
 
 GLOBAL_COLUMNS = [
+    'experiment', 'model_name',
     'sweep_type', 'vary_param', 'vary_value',
     'seq_len', 'n_hidden', 'b', 'hidden_dim', 'bottleneck',
     'params', 'batch_size', 'total_samples', 'total_symbols',

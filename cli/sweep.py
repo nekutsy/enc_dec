@@ -349,7 +349,7 @@ def build_parser():
     gp.add_argument('--optimizer', default='adamw_fused')
     gp.add_argument('--target-samples', type=str, default='5M')
     gp.add_argument('--workspace', default='sessions/sweep')
-    gp.add_argument('--sweep-log', default='sessions/sweep_summary.csv')
+    gp.add_argument('--sweep-log', default='sessions/global.csv')
     gp.add_argument('--device', default='auto')
     gp.add_argument('--batch-size', type=int, default=None)
     gp.add_argument('--early-stop', type=int, default=None)
@@ -372,7 +372,7 @@ def build_parser():
     bp.add_argument('--optimizer', default='adamw_fused')
     bp.add_argument('--target-samples', type=str, default='5M')
     bp.add_argument('--workspace', default='sessions/sweep')
-    bp.add_argument('--sweep-log', default='sessions/sweep_summary.csv')
+    bp.add_argument('--sweep-log', default='sessions/global.csv')
     bp.add_argument('--device', default='auto')
     bp.add_argument('--batch-size', type=int, default=None)
 
@@ -409,7 +409,7 @@ def _cli_shorthand_to_config(args, vary_values) -> SweepConfig:
         ),
         output=OutputConfig(
             workspace=getattr(args, 'workspace', 'sessions/sweep'),
-            sweep_log=getattr(args, 'sweep_log', 'sessions/sweep_summary.csv'),
+            sweep_log=getattr(args, 'sweep_log', 'sessions/global.csv'),
             device=getattr(args, 'device', 'auto'),
         ),
     )

@@ -104,7 +104,8 @@ def run_training(start_samples: int, max_samples: int, model, optimizer, criteri
 
     best_val_loss = float('inf')
     stale_checkpoints = 0
-    best_model_path = model_path.replace('.pth', '_best.pth')
+    model_dir = os.path.dirname(model_path)
+    best_model_path = os.path.join(model_dir, 'best.pth')
     _early_stopped = False
 
     # ── Resume early-stopping counters ──

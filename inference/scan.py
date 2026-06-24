@@ -5,18 +5,23 @@ Pure domain logic. Filesystem I/O is the only side effect.
 
 import os
 import re
+import json
 
 from encoding.unicode21 import UNICODE_BITS
 
 
 def parse_key(path: str) -> list[int]:
-    """Parse model layer sizes from filename.
-
-    Filename format: '2688_7644_7644_128_sweep_n2_best.pth'
-    Encoder half → numeric segments → mirror for decoder → full architecture.
-
-    Returns [] if filename doesn't contain a valid architecture.
-    """
+    """Parse model layer sizes from meta.json. Falls back to filename."""
+    # New format: dir/model.meta.json
+    model_dir = os.path.dirname(path)
+    meta_path = os.path.join(model_dir, 'model.meta.json')
+    if os.path.isfile(meta_path):
+        with open(meta_path) as f:
+            meta = json.load(f)
+            sizes = meta.get('layer_sizes', [])
+            if sizes:
+                return sizes
+    # Fallback: old-format filename
     base = os.path.basename(path).replace('.pth', '').replace('_best', '')
     parts = base.split('_')
     sizes: list[int] = []
@@ -24,10 +29,9 @@ def parse_key(path: str) -> list[int]:
         if p.isdigit():
             sizes.append(int(p))
         else:
-            break  # stop at first non-digit segment (model name suffix)
+            break
     if len(sizes) < 3:
         return []
-    # Encoder half → full mirror architecture
     decoder = list(reversed(sizes[:-1]))
     return sizes + decoder
 
@@ -55,35 +59,44 @@ def count_params(sizes: list[int]) -> int:
 
 def scan_models(sessions_dir: str = 'sessions') -> list[
         tuple[str, list[int], int, str]]:
-    """Walk sessions/ for .pth files.
+    """Walk sessions/ for model.pth files.
+
+    New format: {experiment}/{model_name}/model.pth  (+ model.meta.json)
+    Old format: {experiment}/*_best.pth  (fallback)
 
     Returns list of (path, sizes, n_params, folder), sorted by n_params desc.
-    Prefers _best.pth over .pth when both exist in the same folder.
-    Deduplicates by (folder, clean_base).
     """
-    candidates: dict[tuple[str, str], tuple[str, bool]] = {}
-    # (folder, clean_base) → (path, is_best)
+    models: list[tuple[str, list[int], int, str]] = []
 
-    for root, _, files in os.walk(sessions_dir):
-        for f in files:
+    # New format: dir-per-model
+    for root, dirs, files in os.walk(sessions_dir):
+        if 'model.pth' in files:
+            rel = os.path.relpath(root, sessions_dir)
+            parts = rel.split(os.sep)
+            folder = parts[0] if len(parts) > 1 else rel  # top-level experiment
+            full = os.path.join(root, 'model.pth')
+            sizes = parse_key(full)
+            if len(sizes) >= 3:
+                n_params = count_params(sizes)
+                models.append((full, sizes, n_params, folder))
+            # Don't recurse deeper — model dirs are leaves
+            dirs.clear()
+            continue
+
+        # Old format: flat .pth files
+        for f in sorted(files, reverse=True):
             if not f.endswith('.pth') or 'training_losses' in f:
                 continue
+            is_best = f.endswith('_best.pth')
+            if not is_best:
+                continue  # only best checkpoints
             full = os.path.join(root, f)
-            base = f.replace('.pth', '')
-            is_best = base.endswith('_best')
-            clean_base = base[:-5] if is_best else base
+            sizes = parse_key(full)
+            if len(sizes) < 3:
+                continue
+            n_params = count_params(sizes)
             folder = os.path.relpath(root, sessions_dir)
-            key = (folder, clean_base)
-            if key not in candidates or is_best:
-                candidates[key] = (full, is_best)
-
-    models: list[tuple[str, list[int], int, str]] = []
-    for (folder, _), (full, _) in candidates.items():
-        sizes = parse_key(full)
-        if len(sizes) < 3:
-            continue
-        n_params = count_params(sizes)
-        models.append((full, sizes, n_params, folder))
+            models.append((full, sizes, n_params, folder))
 
     return sorted(models, key=lambda m: -m[2])
 

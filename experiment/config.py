@@ -92,7 +92,7 @@ class SweepSpec:
 class OutputConfig:
     """Paths and device preference. No runtime data."""
     workspace: str = 'sessions/sweep'
-    sweep_log: str = 'sessions/sweep_summary.csv'
+    sweep_log: str = 'sessions/global.csv'
     device: str = 'auto'               # auto | cuda | cpu
 
 

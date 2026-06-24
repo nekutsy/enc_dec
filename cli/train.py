@@ -175,7 +175,7 @@ Examples:
             ),
             output=OutputConfig(
                 workspace=args.workspace,
-                sweep_log=os.path.join(args.workspace, 'summary.csv'),
+                sweep_log='sessions/global.csv',
                 device=args.device,
             ),
         )
@@ -205,13 +205,12 @@ Examples:
     if args.fresh:
         # Remove checkpoint files to force clean start
         from sweep_lib import save_paths
-        import glob as _glob
         model_name = args.name or f'n{arch["n"]}_s{cfg.model.seq_len}'
-        model_path, csv_path = save_paths(sizes, model_name,
-                                          prefix=cfg.output.workspace)
+        model_path, csv_path, model_dir = save_paths(model_name,
+                                                     prefix=cfg.output.workspace)
         for pattern in [model_path, model_path + '.opt', model_path + '.sch',
-                        model_path.replace('.pth', '_best.pth'),
-                        model_path.replace('.pth', '_best.pth') + '.sch',
+                        os.path.join(model_dir, 'best.pth'),
+                        os.path.join(model_dir, 'best.pth') + '.sch',
                         csv_path]:
             if os.path.exists(pattern):
                 os.remove(pattern)
