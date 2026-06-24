@@ -95,7 +95,6 @@ enc_dec/
 ├── sweep_config.py       # ModelConfig, TrainConfig, SweepConfig, OutputConfig (датаклассы)
 ├── data.py               # Загрузка текста, Unicode-21, SlidingWindowDataset, кэш
 ├── train.py              # CLI тренировки одной модели (основной интерфейс)
-├── autoencoder.py        # Устаревший entry-point для тренировки (не рекомендуется)
 ├── sweep.py              # CLI sweep-раннер: grid, binary, grid×binary
 ├── sweep_lib.py          # resolve_architecture, train_one, build_optimizer, Lion, Sophia
 ├── infer_test.py         # Интерактивная инференс-консоль

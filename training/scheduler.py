@@ -56,7 +56,7 @@ class GreedyLR:
         self._stale_count = 0           # chkpts since running_best was set
         self._phase = 'normal'          # normal | probing | cooldown
         self._phase_steps = 0           # remaining steps in current phase
-        self._probe_backup = None       # (lr, ema, prev_ema, running_best, best_probe_loss)
+        self._probe_backup = None       # dict: {lr, ema, prev_ema, running_best, best_probe}
 
     def step(self, val_loss):
         # Update EMA
@@ -87,9 +87,9 @@ class GreedyLR:
 
         if self._phase == 'probing':
             self._phase_steps -= 1
-            old_lr, old_ema, old_prev_ema, old_best, best_probe = self._probe_backup
-            if val_loss < best_probe:
-                self._probe_backup = (old_lr, old_ema, old_prev_ema, old_best, val_loss)
+            bp = self._probe_backup
+            if val_loss < bp['best_probe']:
+                bp['best_probe'] = val_loss
             if self._phase_steps <= 0:
                 self._evaluate_probe()
             return
@@ -134,7 +134,13 @@ class GreedyLR:
 
     def _start_probe(self):
         lr = self.optimizer.param_groups[0]['lr']
-        self._probe_backup = (lr, self._ema, self._prev_ema, self._running_best, float('inf'))
+        self._probe_backup = {
+            'lr': lr,
+            'ema': self._ema,
+            'prev_ema': self._prev_ema,
+            'running_best': self._running_best,
+            'best_probe': float('inf'),
+        }
         self._phase = 'probing'
         self._phase_steps = self.probe_lock_steps
         self._running_best = float('inf')
@@ -148,7 +154,12 @@ class GreedyLR:
         return self._phase != 'normal'
 
     def _evaluate_probe(self):
-        old_lr, old_ema, old_prev_ema, old_best, best_probe = self._probe_backup
+        bp = self._probe_backup
+        old_lr = bp['lr']
+        old_ema = bp['ema']
+        old_prev_ema = bp['prev_ema']
+        old_best = bp['running_best']
+        best_probe = bp['best_probe']
         self._probe_backup = None
         if best_probe < float('inf') and best_probe < old_best:
             # Probe helped — keep lower LR, reset from improved state
@@ -188,7 +199,15 @@ class GreedyLR:
         self._stale_count = sd.get('_stale_count', 0)
         self._phase = sd.get('_phase', 'normal')
         self._phase_steps = sd.get('_phase_steps', 0)
-        self._probe_backup = sd.get('_probe_backup', None)
+        bp = sd.get('_probe_backup', None)
+        if bp is not None and isinstance(bp, (list, tuple)):
+            # Backward compat: old tuple format → dict
+            self._probe_backup = {
+                'lr': bp[0], 'ema': bp[1], 'prev_ema': bp[2],
+                'running_best': bp[3], 'best_probe': bp[4],
+            }
+        else:
+            self._probe_backup = bp
 
 
 # ── GreedyDiffLR (first-order) ────────────────────────────

@@ -465,26 +465,32 @@ def compile_model(model, device):
 # ══════════════════════════════════════════════════════════════
 
 def train_setup(model, optimizer, csv_path, model_path, device):
-    """Load checkpoint if available, return start_samples."""
+    """Load checkpoint if available, return (start_samples, effective_path).
+
+    effective_path is the actual checkpoint file used — may differ from
+    model_path when the main .pth is missing but _best.pth exists.
+    Callers must use this path for scheduler state loading.
+    """
     start_samples = get_last_samples(csv_path)
+    effective_path = model_path
     if start_samples > 0:
-        if not os.path.isfile(model_path):
+        if not os.path.isfile(effective_path):
             best_path = model_path.replace('.pth', '_best.pth')
             if os.path.isfile(best_path):
-                model_path = best_path
+                effective_path = best_path
                 print(f'  Using _best checkpoint (main .pth missing)')
-        if not os.path.isfile(model_path):
+        if not os.path.isfile(effective_path):
             print(f'  No checkpoint found — starting from scratch')
-            return 0
+            return 0, model_path
         print(f'  Resuming from {start_samples:,} samples. Loading checkpoint...')
-        state = torch.load(model_path, map_location=device, weights_only=True)
+        state = torch.load(effective_path, map_location=device, weights_only=True)
         has_prefix = any(k.startswith('_orig_mod.') for k in state.keys())
         unwrapped = model._orig_mod if hasattr(model, '_orig_mod') else model
         if has_prefix:
             state = {k[len('_orig_mod.'):]: v for k, v in state.items()}
         unwrapped.load_state_dict(state)
-        load_optimizer(optimizer, model_path, device)
-    return start_samples
+        load_optimizer(optimizer, effective_path, device)
+    return start_samples, effective_path
 
 
 # ══════════════════════════════════════════════════════════════
@@ -590,7 +596,7 @@ def train_one(arch: dict, sweep_config: SweepConfig, model_prefix: str,
     optimizer = build_optimizer(model, tc, device)
 
     total_batches = int(target_samples / bs) + 1
-    start_samples = train_setup(model, optimizer, csv_path, model_path, device)
+    start_samples, ckpt_path = train_setup(model, optimizer, csv_path, model_path, device)
     if resume_lr_reset:
         print('  Starting fresh optimizer (LR reset)')
         start_samples = get_last_samples(csv_path)  # load weights, skip opt state
@@ -614,9 +620,9 @@ def train_one(arch: dict, sweep_config: SweepConfig, model_prefix: str,
         greedy_diff_max_lr=tc.greedy_diff_max_lr,
         greedy_diff_warmup=tc.greedy_diff_warmup)
     if start_samples > 0 and checkpoint_scheduler is not None:
-        load_plat_scheduler(checkpoint_scheduler, model_path)
+        load_plat_scheduler(checkpoint_scheduler, ckpt_path)
     if start_samples > 0 and step_scheduler is not None:
-        load_step_scheduler(step_scheduler, model_path)
+        load_step_scheduler(step_scheduler, ckpt_path)
     criterion = nn.BCEWithLogitsLoss()
 
     # ── TrainingLogger ──
