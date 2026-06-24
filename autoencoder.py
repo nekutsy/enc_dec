@@ -88,7 +88,12 @@ def main():
     )
     total_batches = int(train_cfg.target_samples / batch_size) + 1
     step_sch, ckpt_sch = build_scheduler(
-        optimizer, train_cfg, total_batches, start_samples=start_samples)
+        optimizer, train_cfg, total_batches, start_samples=start_samples,
+        greedy_diff_d=train_cfg.greedy_diff_d,
+        greedy_diff_packet=train_cfg.greedy_diff_packet,
+        greedy_diff_k=train_cfg.greedy_diff_k,
+        greedy_diff_min_lr=train_cfg.greedy_diff_min_lr,
+        greedy_diff_max_lr=train_cfg.greedy_diff_max_lr)
 
     print(f'Training 30 epochs ({train_cfg.target_samples:,} samples)...')
     try:

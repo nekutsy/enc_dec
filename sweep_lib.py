@@ -21,7 +21,7 @@ from model import Autoencoder
 from data import load_text, prepare_data
 from training import (
     run_training, build_scheduler,
-    save_checkpoint, load_optimizer, load_plat_scheduler,
+    save_checkpoint, load_optimizer, load_plat_scheduler, load_step_scheduler,
 )
 from utils import cuda_safe_cleanup, gpu_health_check
 from logger import (
@@ -605,9 +605,16 @@ def train_one(arch: dict, sweep_config: SweepConfig, model_prefix: str,
         probe_factor=tc.greedy_probe_factor,
         probe_spike_ratio=tc.greedy_probe_spike_ratio,
         probe_lock_steps=tc.greedy_probe_lock,
-        cooldown_steps=tc.greedy_cooldown)
+        cooldown_steps=tc.greedy_cooldown,
+        greedy_diff_d=tc.greedy_diff_d,
+        greedy_diff_packet=tc.greedy_diff_packet,
+        greedy_diff_k=tc.greedy_diff_k,
+        greedy_diff_min_lr=tc.greedy_diff_min_lr,
+        greedy_diff_max_lr=tc.greedy_diff_max_lr)
     if start_samples > 0 and checkpoint_scheduler is not None:
         load_plat_scheduler(checkpoint_scheduler, model_path)
+    if start_samples > 0 and step_scheduler is not None:
+        load_step_scheduler(step_scheduler, model_path)
     criterion = nn.BCEWithLogitsLoss()
 
     # ── TrainingLogger ──

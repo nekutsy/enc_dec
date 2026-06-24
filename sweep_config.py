@@ -45,7 +45,7 @@ class TrainConfig:
     batch_size: int = 256
     lr: float = 0.001
     grad_clip: float = 1.0
-    scheduler: str = 'onecycle'        # onecycle | plateau | cosine | greedy | none
+    scheduler: str = 'onecycle'        # onecycle | plateau | cosine | greedy | greedy_diff | none
     warmup_fraction: float = 0.02      # fraction of total steps for warmup
     pct_start: float = 0.3             # onecycle: fraction at which LR peaks
     plateau_patience: int = 10          # plateau: checkpoints without improvement
@@ -57,6 +57,12 @@ class TrainConfig:
     greedy_probe_spike_ratio: float = 2.5  # greedy: skip probe if current/last best > this
     greedy_probe_lock: int = 3           # greedy: probe observation window
     greedy_cooldown: int = 3             # greedy: cooldown after failed probe
+    # greedy_diff
+    greedy_diff_d: int = 10               # packets between loss measurements
+    greedy_diff_packet: int = 100          # batches per measurement packet
+    greedy_diff_k: float = 1.0             # damping coefficient
+    greedy_diff_min_lr: float = 1e-7
+    greedy_diff_max_lr: float = 0.1
     optimizer: str = 'adamw_fused'     # adamw_fused | adamw | sgd | nag | lion | sophia
     weight_decay: float = 0.01
     decay_linear_only: bool = True     # True → only Linear weights; False → all params

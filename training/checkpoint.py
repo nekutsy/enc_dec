@@ -9,12 +9,13 @@ from utils import cuda_safe_cleanup as _cuda_safe_cleanup
 
 
 def save_checkpoint(model, optimizer, model_path: str,
-                    checkpoint_scheduler=None):
+                    checkpoint_scheduler=None, step_scheduler=None):
     """Save model weights + optimizer state atomically.
 
     Handles compiled models (_orig_mod unwrapping).
     Side effect: syncs CUDA before save.
-    Optionally saves ReduceLROnPlateau scheduler state.
+    Optionally saves scheduler state (checkpoint_scheduler → .sch,
+    step_scheduler → .step_sch).
     """
     _cuda_safe_cleanup()
     unwrapped = model._orig_mod if hasattr(model, '_orig_mod') else model
@@ -24,6 +25,9 @@ def save_checkpoint(model, optimizer, model_path: str,
     if checkpoint_scheduler is not None:
         sch_path = model_path + ".sch"
         torch.save(checkpoint_scheduler.state_dict(), sch_path)
+    if step_scheduler is not None and hasattr(step_scheduler, 'state_dict'):
+        sch_path = model_path + ".step_sch"
+        torch.save(step_scheduler.state_dict(), sch_path)
 
 
 def load_optimizer(optimizer, model_path: str, device):
@@ -45,6 +49,21 @@ def load_plat_scheduler(checkpoint_scheduler, model_path: str):
     if os.path.isfile(sch_path):
         checkpoint_scheduler.load_state_dict(
             torch.load(sch_path, map_location='cpu', weights_only=True))
+
+
+def load_step_scheduler(step_scheduler, model_path: str):
+    """Load step-scheduler state from model_path.step_sch.
+
+    Used for schedulers with state_dim (GreedyDiffLR).
+    Skips silently if file missing or no state_dict.
+    """
+    if step_scheduler is None:
+        return
+    sch_path = model_path + ".step_sch"
+    if os.path.isfile(sch_path):
+        sd = torch.load(sch_path, map_location='cpu', weights_only=True)
+        if hasattr(step_scheduler, 'load_state_dict'):
+            step_scheduler.load_state_dict(sd)
 
 
 def resume_early_stopping_state(csv_path: str):

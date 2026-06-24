@@ -170,7 +170,8 @@ def run_training(start_samples: int, max_samples: int, model, optimizer, criteri
                             best_val_loss = avg_val_loss
                             stale_checkpoints = 0
                             save_checkpoint(model, optimizer, best_model_path,
-                                            checkpoint_scheduler=checkpoint_scheduler)
+                                            checkpoint_scheduler=checkpoint_scheduler,
+                                            step_scheduler=step_scheduler)
                         elif checkpoint_scheduler is not None and hasattr(checkpoint_scheduler, 'is_exploring') and checkpoint_scheduler.is_exploring():
                             # Don't count probe/cooldown checkpoints as stale
                             pass
@@ -202,7 +203,8 @@ def run_training(start_samples: int, max_samples: int, model, optimizer, criteri
         _cuda_safe_cleanup()
         print("Saving checkpoint...", file=sys.stderr, flush=True)
         save_checkpoint(model, optimizer, model_path,
-                        checkpoint_scheduler=checkpoint_scheduler)
+                        checkpoint_scheduler=checkpoint_scheduler,
+                        step_scheduler=step_scheduler)
         raise
 
     # ── Normal exit ──
@@ -218,6 +220,7 @@ def run_training(start_samples: int, max_samples: int, model, optimizer, criteri
             lr=cur_lr)
 
     save_checkpoint(model, optimizer, model_path,
-                    checkpoint_scheduler=checkpoint_scheduler)
+                    checkpoint_scheduler=checkpoint_scheduler,
+                    step_scheduler=step_scheduler)
     print(f"Training finished. Model saved to {model_path}")
     return total_samples

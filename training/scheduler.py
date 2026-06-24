@@ -191,6 +191,104 @@ class GreedyLR:
         self._probe_backup = sd.get('_probe_backup', None)
 
 
+# ── GreedyDiffLR (first-order) ────────────────────────────
+
+class GreedyDiffLR:
+    """First-order GreedyLR — maximises convergence rate via D'(loss).
+
+    Instead of driving delta-loss to zero (original GreedyLR), this aims
+    to keep the *rate* of loss decrease at its maximum.
+
+    Algorithm:
+      1. Group batches into packets of size `packet_size`, average loss.
+      2. D(p) = (L_p - L_{p-d}) / L_p          — relative change (d in packets)
+      3. D'(p) = (D_p - D_{p-d}) / d            — derivative (convergence acceleration)
+      4. lr(p) = lr(p-d) * (1 + k * D'(p-d))    — adjust toward maximum |D|
+      5. Clamp to [min_lr, max_lr]
+
+    Requires warmup (≥ 3*d packets) before first LR adjustment.
+    Operates on train loss — not suitable when overfitting is a risk.
+
+    Compatible with checkpoint save/load via state_dict().
+    """
+
+    uses_loss = True  # signals step_batch to feed loss value
+
+    def __init__(self, optimizer, d=10, packet_size=100, k=1.0,
+                 min_lr=1e-7, max_lr=0.1, warmup_packets=None):
+        self.optimizer = optimizer
+        self.d = max(1, d)                          # measurement spacing (packets)
+        self.packet_size = max(1, packet_size)       # batches per packet
+        self.k = k                                    # damping coefficient
+        self.min_lr = min_lr
+        self.max_lr = max_lr
+        self.warmup_packets = warmup_packets if warmup_packets is not None else 3 * d
+
+        self._losses = []           # avg loss per packet, indexed by packet idx
+        self._D_values = {}         # packet_idx -> D value
+        self._Dprime_values = {}    # packet_idx -> D' value
+        self._loss_sum = 0.0
+        self._loss_count = 0
+        self._p = 0                 # current packet index
+
+    def step(self, loss):
+        """Feed a single batch loss; adjusts LR at packet boundaries."""
+        self._loss_sum += loss
+        self._loss_count += 1
+        if self._loss_count < self.packet_size:
+            return
+
+        # Packet complete
+        avg = self._loss_sum / self._loss_count
+        self._losses.append(avg)
+        p = self._p
+        self._p += 1
+        self._loss_sum = 0.0
+        self._loss_count = 0
+
+        d = self.d
+
+        # Compute D(p) = (L_p - L_{p-d}) / L_p
+        if p >= d:
+            L_p = self._losses[p]
+            L_pd = self._losses[p - d]
+            denom = abs(L_p) + 1e-12
+            self._D_values[p] = (L_p - L_pd) / denom
+
+        # Compute D'(p-d) = (D_{p-d} - D_{p-2d}) / d
+        if p >= 2 * d:
+            D_pd = self._D_values.get(p - d)
+            D_p2d = self._D_values.get(p - 2 * d)
+            if D_pd is not None and D_p2d is not None:
+                self._Dprime_values[p - d] = (D_pd - D_p2d) / d
+
+        # Apply: lr = lr * (1 + k * D'(p-d))
+        if p >= 3 * d:
+            Dprime = self._Dprime_values.get(p - d)
+            if Dprime is not None:
+                mult = 1.0 + self.k * Dprime
+                for pg in self.optimizer.param_groups:
+                    pg['lr'] = max(self.min_lr, min(self.max_lr, pg['lr'] * mult))
+
+    def state_dict(self):
+        return {
+            '_losses': self._losses,
+            '_D_values': self._D_values,
+            '_Dprime_values': self._Dprime_values,
+            '_loss_sum': self._loss_sum,
+            '_loss_count': self._loss_count,
+            '_p': self._p,
+        }
+
+    def load_state_dict(self, sd):
+        self._losses = sd['_losses']
+        self._D_values = sd['_D_values']
+        self._Dprime_values = sd['_Dprime_values']
+        self._loss_sum = sd.get('_loss_sum', 0.0)
+        self._loss_count = sd.get('_loss_count', 0)
+        self._p = sd.get('_p', len(self._losses))
+
+
 # ── Builder ───────────────────────────────────────────────
 
 def build_scheduler(optimizer, train_config, total_steps: int, start_samples: int = 0,
@@ -199,7 +297,11 @@ def build_scheduler(optimizer, train_config, total_steps: int, start_samples: in
                      lock_steps: int = 3,
                      probe_patience: int = 4, probe_factor: float = 0.5,
                      probe_spike_ratio: float = 2.5,
-                     probe_lock_steps: int = 3, cooldown_steps: int = 3):
+                     probe_lock_steps: int = 3, cooldown_steps: int = 3,
+                     greedy_diff_d: int = 10, greedy_diff_packet: int = 100,
+                     greedy_diff_k: float = 1.0,
+                     greedy_diff_min_lr: float = 1e-7,
+                     greedy_diff_max_lr: float = 0.1):
     """Build (per_step_scheduler, per_checkpoint_scheduler) from TrainConfig.
 
     per_step_scheduler: called every batch (warmup, cosine, onecycle).
@@ -237,6 +339,14 @@ def build_scheduler(optimizer, train_config, total_steps: int, start_samples: in
                           probe_spike_ratio=probe_spike_ratio,
                           probe_lock_steps=probe_lock_steps, cooldown_steps=cooldown_steps)
         return warmup, greedy
+
+    if scheduler == "greedy_diff":
+        # No external warmup — GreedyDiffLR has built-in warmup_packets delay
+        gd = GreedyDiffLR(
+            optimizer, d=greedy_diff_d, packet_size=greedy_diff_packet,
+            k=greedy_diff_k, min_lr=greedy_diff_min_lr, max_lr=greedy_diff_max_lr,
+        )
+        return gd, None
 
     return None, None
 

@@ -40,6 +40,9 @@ def step_batch(model, x_batch, y_batch, criterion, optimizer,
         optimizer.step()
 
     if step_scheduler is not None:
-        step_scheduler.step()
+        if getattr(step_scheduler, 'uses_loss', False):
+            step_scheduler.step(loss.item())
+        else:
+            step_scheduler.step()
 
     return loss.item()
