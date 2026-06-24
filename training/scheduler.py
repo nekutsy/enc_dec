@@ -1,5 +1,7 @@
 """LR scheduler builder — one function per scheduler type."""
 
+from __future__ import annotations
+
 import torch
 
 
@@ -210,20 +212,25 @@ class GreedyLR:
             self._probe_backup = bp
 
 
-# ── GreedyDiffLR (first-order) ────────────────────────────
+# ── GreedyDiffLR (second-order) ──────────────────────────
 
 class GreedyDiffLR:
-    """First-order GreedyLR — maximises convergence rate via D'(loss).
+    """Second-order GreedyLR — maximises convergence rate via D'(loss).
 
-    Instead of driving delta-loss to zero (original GreedyLR), this aims
-    to keep the *rate* of loss decrease at its maximum.
+    Instead of driving delta-loss to zero (original GreedyLR), this tracks
+    the second derivative to find and ride extrema of relative change.
 
     Algorithm:
       1. Group batches into packets of size `packet_size`, average loss.
       2. D(p) = (L_p - L_{p-d}) / L_p          — relative change (d in packets)
-      3. D'(p) = (D_p - D_{p-d}) / d            — derivative (convergence acceleration)
-      4. lr(p) = lr(p-d) * (1 + k * D'(p-d))    — adjust toward maximum |D|
-      5. Clamp to [min_lr, max_lr]
+      3. D'(p) = (D_p - D_{p-d}) / d            — derivative (convergence accel)
+      4. l'(p) = (l_p - l_{p-d}) / d            — LR velocity
+      5. l(p) = l(p-d) + k * (l'(p-d) + K * l(p-d)) * D'(p-d)
+         K < 0, |K| ≪ 1 — prevents l' from decaying to zero
+      6. Clamp to [min_lr, max_lr]
+
+    Zeroes of D' are extrema of D (max/min convergence rate). The update
+    pushes LR toward regions of maximum |D|.
 
     Requires warmup (≥ 3*d packets) before first LR adjustment.
     Operates on train loss — not suitable when overfitting is a risk.
@@ -233,26 +240,29 @@ class GreedyDiffLR:
 
     uses_loss = True  # signals step_batch to feed loss value
 
-    def __init__(self, optimizer, d=10, packet_size=100, k=1.0,
+    def __init__(self, optimizer, d=1, packet_size=100, k=1.0,
+                 K=-0.01,
                  min_lr=1e-7, max_lr=0.1,
                  warmup_steps=0, warmup_start_factor=0.1):
         self.optimizer = optimizer
-        self.d = max(1, d)                          # measurement spacing (packets)
-        self.packet_size = max(1, packet_size)       # batches per packet
-        self.k = k                                    # damping coefficient
+        self.d = max(1, d)                           # measurement spacing (packets)
+        self.packet_size = max(1, packet_size)        # batches per packet
+        self.k = k                                     # damping coefficient
+        self.K = K                                     # anti-stagnation (negative, small)
         self.min_lr = min_lr
         self.max_lr = max_lr
         self.warmup_steps = warmup_steps
         self.warmup_start_factor = warmup_start_factor
         self._base_lr = optimizer.param_groups[0]['lr']
 
-        self._losses = []           # avg loss per packet, indexed by packet idx
-        self._D_values = {}         # packet_idx -> D value
-        self._Dprime_values = {}    # packet_idx -> D' value
+        self._losses = []            # avg loss per packet, indexed by packet idx
+        self._D_values = {}          # packet_idx -> D value
+        self._Dprime_values = {}     # packet_idx -> D' value
+        self._lr_history = []        # lr at each packet boundary [lr_0, lr_1, ...]
         self._loss_sum = 0.0
         self._loss_count = 0
-        self._p = 0                 # current packet index
-        self._step = 0              # batch count (for warmup tracking)
+        self._p = 0                  # current packet index
+        self._step = 0               # batch count (for warmup tracking)
 
         if warmup_steps > 0:
             for pg in self.optimizer.param_groups:
@@ -266,7 +276,7 @@ class GreedyDiffLR:
         if self._loss_count < self.packet_size:
             return
 
-        # Packet complete
+        # ── Packet complete ──
         avg = self._loss_sum / self._loss_count
         self._losses.append(avg)
         p = self._p
@@ -276,72 +286,88 @@ class GreedyDiffLR:
 
         d = self.d
 
-        # Compute D(p) = (L_p - L_{p-d}) / L_p
+        # Record current LR at this packet boundary
+        self._lr_history.append(self.optimizer.param_groups[0]['lr'])
+
+        # ── D(p) = (L_p - L_{p-d}) / L_p ──
         if p >= d:
             L_p = self._losses[p]
             L_pd = self._losses[p - d]
             denom = abs(L_p) + 1e-12
             self._D_values[p] = (L_p - L_pd) / denom
 
-        # Compute D'(p-d) = (D_{p-d} - D_{p-2d}) / d
+        # ── D'(p-d) = (D_{p-d} - D_{p-2d}) / d ──
         if p >= 2 * d:
             D_pd = self._D_values.get(p - d)
             D_p2d = self._D_values.get(p - 2 * d)
             if D_pd is not None and D_p2d is not None:
                 self._Dprime_values[p - d] = (D_pd - D_p2d) / d
 
-        # Warmup: linear ramp, packets still collected but LR not adjusted
+        # ── Warmup: linear ramp ──
         if self._step < self.warmup_steps:
             progress = self._step / max(1, self.warmup_steps)
             lr = self._base_lr * (self.warmup_start_factor
-                                   + (1.0 - self.warmup_start_factor) * progress)
-            self._last_mult = lr / self._base_lr
+                                  + (1.0 - self.warmup_start_factor) * progress)
+            self._lr_history[-1] = lr  # correct recorded LR
             for pg in self.optimizer.param_groups:
                 pg['lr'] = lr
             return
 
-        # Apply: lr = lr * (1 + k * D'(p-d))
+        # ── Apply: l(p) = l(p-d) + k * (l'(p-d) + K * l(p-d)) * D'(p-d) ──
         if p >= 3 * d:
             Dprime = self._Dprime_values.get(p - d)
             if Dprime is not None:
-                mult = 1.0 + self.k * Dprime
-                self._last_mult = mult
+                lr_pd = self._lr_history[p - d]
+                lr_p2d = self._lr_history[p - 2 * d]
+                lr_velocity = (lr_pd - lr_p2d) / d
+                effective = lr_velocity + self.K * lr_pd
+                delta = self.k * effective * Dprime
+                new_lr = lr_pd + delta
+                new_lr = max(self.min_lr, min(self.max_lr, new_lr))
+                self._last_delta = delta
                 for pg in self.optimizer.param_groups:
-                    pg['lr'] = max(self.min_lr, min(self.max_lr, pg['lr'] * mult))
+                    pg['lr'] = new_lr
+
+    # ── Debug info ────────────────────────────────────────
 
     def get_debug_info(self) -> dict | None:
-        """Return latest D, D', multiplier for debug logging. None if no data yet."""
+        """Return latest D, D', lr_delta for progress logging."""
         p = self._p
         d = self.d
         D_val = self._D_values.get(p - 1) if p > 0 else None
         Dprime_val = None
         if p > 2 * d:
             Dprime_val = self._Dprime_values.get(p - 1 - d)
-        if D_val is None and not hasattr(self, '_last_mult'):
+        if D_val is None and not hasattr(self, '_last_delta'):
             return None
         return {
             'D': D_val,
             'Dprime': Dprime_val,
-            'mult': getattr(self, '_last_mult', 1.0),
+            'lr_delta': getattr(self, '_last_delta', 0.0),
+            'lr': self.optimizer.param_groups[0]['lr'],
         }
+
+    # ── Checkpointing ─────────────────────────────────────
 
     def state_dict(self):
         return {
             '_losses': self._losses,
             '_D_values': self._D_values,
             '_Dprime_values': self._Dprime_values,
+            '_lr_history': self._lr_history,
             '_loss_sum': self._loss_sum,
             '_loss_count': self._loss_count,
             '_p': self._p,
             '_step': self._step,
             '_base_lr': self._base_lr,
-            '_last_mult': getattr(self, '_last_mult', 1.0),
+            '_last_delta': getattr(self, '_last_delta', 0.0),
         }
 
     def load_state_dict(self, sd):
         self._losses = sd['_losses']
         self._D_values = sd['_D_values']
         self._Dprime_values = sd['_Dprime_values']
+        self._lr_history = sd.get('_lr_history', [])
         self._loss_sum = sd.get('_loss_sum', 0.0)
         self._loss_count = sd.get('_loss_count', 0)
         self._p = sd.get('_p', len(self._losses))
@@ -403,8 +429,9 @@ def build_scheduler(optimizer, train_config, total_steps: int,
             wsteps = 0  # skip warmup on resume
         gd = GreedyDiffLR(
             optimizer, d=tc.greedy_diff_d, packet_size=tc.greedy_diff_packet,
-            k=tc.greedy_diff_k, min_lr=tc.greedy_diff_min_lr,
-            max_lr=tc.greedy_diff_max_lr, warmup_steps=wsteps,
+            k=tc.greedy_diff_k, K=tc.greedy_diff_K,
+            min_lr=tc.greedy_diff_min_lr, max_lr=tc.greedy_diff_max_lr,
+            warmup_steps=wsteps,
         )
         return gd, None
 

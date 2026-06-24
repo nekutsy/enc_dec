@@ -58,9 +58,10 @@ class TrainConfig:
     greedy_probe_lock: int = 3           # greedy: probe observation window
     greedy_cooldown: int = 3             # greedy: cooldown after failed probe
     # greedy_diff
-    greedy_diff_d: int = 10               # packets between loss measurements
+    greedy_diff_d: int = 1                # packets between loss measurements
     greedy_diff_packet: int = 100          # batches per measurement packet
     greedy_diff_k: float = 1.0             # damping coefficient
+    greedy_diff_K: float = -0.01           # anti-stagnation: prevents l' → 0 (negative, small)
     greedy_diff_min_lr: float = 1e-7
     greedy_diff_max_lr: float = 0.1
     greedy_diff_warmup: int = 0             # warmup batches (0 → use warmup_fraction)

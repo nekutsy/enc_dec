@@ -218,9 +218,16 @@ class TrainingLogger:
             v = row['lr']
             parts.append(f'lr={v:.2e}' if isinstance(v, float) else f'lr={v}')
         if debug:
-            parts.append(f'D={debug["D"]:.2e}' if debug.get('D') is not None else 'D=--')
-            parts.append(f"D'={debug['Dprime']:.2e}" if debug.get('Dprime') is not None else "D'=--")
-            parts.append(f'm={debug["mult"]:.4f}')
+            D_v = debug.get('D')
+            Dp_v = debug.get('Dprime')
+            mult_v = debug.get('mult')
+            delta_v = debug.get('lr_delta')
+            parts.append(f'D={D_v:.2e}' if D_v is not None else 'D=--')
+            parts.append(f"D'={Dp_v:.2e}" if Dp_v is not None else "D'=--")
+            if mult_v is not None:
+                parts.append(f'm={mult_v:.4f}')
+            elif delta_v is not None:
+                parts.append(f'Δlr={delta_v:+.2e}')
 
         ts = time_mod.strftime('%Y-%m-%d %H:%M:%S')
         name_str = f'{self.model_name} | ' if self.model_name else ''
@@ -242,11 +249,18 @@ class TrainingLogger:
         if lr is not None:
             line += f' | lr={lr:.2e}'
         if debug:
-            if debug.get('D') is not None:
-                line += f' | D={debug["D"]:.2e}'
-            if debug.get('Dprime') is not None:
-                line += f" | D'={debug['Dprime']:.2e}"
-            line += f' | m={debug["mult"]:.4f}'
+            D_v = debug.get('D')
+            Dp_v = debug.get('Dprime')
+            mult_v = debug.get('mult')
+            delta_v = debug.get('lr_delta')
+            if D_v is not None:
+                line += f' | D={D_v:.2e}'
+            if Dp_v is not None:
+                line += f" | D'={Dp_v:.2e}"
+            if mult_v is not None:
+                line += f' | m={mult_v:.4f}'
+            elif delta_v is not None:
+                line += f' | Δlr={delta_v:+.2e}'
         return line
 
     @property
