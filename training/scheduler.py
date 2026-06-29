@@ -389,18 +389,19 @@ class GreedyGradLR:
     the gradient.  Heavy momentum (default 0.995) smooths the update
     path, and random exploration kicks in when the gradient vanishes.
 
-    Key differences from GreedyDiffLR:
-      - Updates EVERY batch (no packet aggregation)
-      - Single regression instead of cascaded finite differences
-      - Multiplicative LR update (percentage change, not additive)
-      - Momentum on Δlr (damped feedback, not undamped lr')
+    Plateau escape: when local best doesn't improve for `plateau_patience`
+    steps, LR is bumped by `plateau_multiplier ** m` (m increments each
+    escape) followed by a cooldown period.  Global improvement resets
+    the counter and m back to 1.
     """
 
     uses_loss = True
 
     def __init__(self, optimizer, window=50, alpha=0.01, momentum=0.995,
                  explore=0.01, min_lr=1e-7, max_lr=0.3,
-                 warmup_steps=0, warmup_start_factor=0.1):
+                 warmup_steps=0, warmup_start_factor=0.1,
+                 plateau_patience=500, plateau_multiplier=1.5,
+                 plateau_cooldown=500):
         self.optimizer = optimizer
         self.window = max(1, window)
         self.alpha = alpha
@@ -413,9 +414,21 @@ class GreedyGradLR:
         self._warmup_steps = warmup_steps
         self._warmup_start_factor = warmup_start_factor
 
+        self.plateau_patience = plateau_patience
+        self.plateau_multiplier = plateau_multiplier
+        self.plateau_cooldown = plateau_cooldown
+
         self._loss_buf = deque(maxlen=window)
         self._lr_buf = deque(maxlen=window)
         self._lr_change = 0.0
+
+        # Plateau escape state
+        self._global_best = float('inf')
+        self._local_best = float('inf')
+        self._steps_no_improve = 0
+        self._m = 1
+        self._in_cooldown = False
+        self._cooldown_counter = 0
 
         if warmup_steps > 0:
             for pg in self.optimizer.param_groups:
@@ -424,10 +437,40 @@ class GreedyGradLR:
     def step(self, loss):
         self._step += 1
         cur_lr = self.optimizer.param_groups[0]['lr']
-        self._loss_buf.append(loss)
-        self._lr_buf.append(cur_lr)
 
-        # Warmup: linear ramp
+        # ── Plateau escape check ──
+        if loss < self._global_best:
+            self._global_best = loss
+            self._local_best = loss
+            self._steps_no_improve = 0
+            self._m = 1
+            self._in_cooldown = False
+            self._cooldown_counter = 0
+        elif self._in_cooldown:
+            self._cooldown_counter -= 1
+            if self._cooldown_counter <= 0:
+                self._in_cooldown = False
+                self._local_best = loss
+                self._steps_no_improve = 0
+        else:
+            if loss < self._local_best:
+                self._local_best = loss
+                self._steps_no_improve = 0
+            else:
+                self._steps_no_improve += 1
+
+        if self._steps_no_improve >= self.plateau_patience:
+            multiplier = self.plateau_multiplier ** self._m
+            new_lr = min(self.max_lr, cur_lr * multiplier)
+            self._m += 1
+            self._steps_no_improve = 0
+            self._in_cooldown = True
+            self._cooldown_counter = self.plateau_cooldown
+            for pg in self.optimizer.param_groups:
+                pg['lr'] = new_lr
+            return
+
+        # ── Warmup ──
         if self._step < self._warmup_steps:
             progress = self._step / max(1, self._warmup_steps)
             lr = self._base_lr * (self._warmup_start_factor
@@ -436,10 +479,13 @@ class GreedyGradLR:
                 pg['lr'] = lr
             return
 
+        # ── Gradient descent on LR ──
+        self._loss_buf.append(loss)
+        self._lr_buf.append(cur_lr)
+
         if len(self._loss_buf) < self.window:
             return
 
-        # Linear regression: ∂loss/∂lr via chain rule
         x = np.arange(self.window, dtype=np.float64)
         y_loss = np.array(list(self._loss_buf), dtype=np.float64)
         y_lr = np.array(list(self._lr_buf), dtype=np.float64)
@@ -453,7 +499,6 @@ class GreedyGradLR:
         cov_lr = np.mean((x - x_mean) * (y_lr - np.mean(y_lr)))
 
         if abs(cov_lr) < 1e-20:
-            # LR hasn't moved meaningfully — explore
             delta = random.uniform(-self.explore, self.explore)
             new_lr = cur_lr * (1.0 + delta)
         else:
@@ -491,6 +536,12 @@ class GreedyGradLR:
             '_lr_change': self._lr_change,
             '_step': self._step,
             '_base_lr': self._base_lr,
+            '_global_best': self._global_best,
+            '_local_best': self._local_best,
+            '_steps_no_improve': self._steps_no_improve,
+            '_m': self._m,
+            '_in_cooldown': self._in_cooldown,
+            '_cooldown_counter': self._cooldown_counter,
         }
 
     def load_state_dict(self, sd):
@@ -499,6 +550,12 @@ class GreedyGradLR:
         self._lr_change = sd['_lr_change']
         self._step = sd['_step']
         self._base_lr = sd.get('_base_lr', self._base_lr)
+        self._global_best = sd.get('_global_best', float('inf'))
+        self._local_best = sd.get('_local_best', float('inf'))
+        self._steps_no_improve = sd.get('_steps_no_improve', 0)
+        self._m = sd.get('_m', 1)
+        self._in_cooldown = sd.get('_in_cooldown', False)
+        self._cooldown_counter = sd.get('_cooldown_counter', 0)
 
 
 # ── Builder ───────────────────────────────────────────────
@@ -572,6 +629,9 @@ def build_scheduler(optimizer, train_config, total_steps: int,
             momentum=tc.greedy_grad_momentum, explore=tc.greedy_grad_explore,
             min_lr=tc.greedy_grad_min_lr, max_lr=tc.greedy_grad_max_lr,
             warmup_steps=wsteps,
+            plateau_patience=tc.greedy_grad_plateau_patience,
+            plateau_multiplier=tc.greedy_grad_plateau_multiplier,
+            plateau_cooldown=tc.greedy_grad_plateau_cooldown,
         )
         return gg, None
 

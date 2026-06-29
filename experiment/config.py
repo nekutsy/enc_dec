@@ -73,6 +73,9 @@ class TrainConfig:
     greedy_grad_min_lr: float = 1e-7
     greedy_grad_max_lr: float = 0.3
     greedy_grad_warmup: int = 0               # warmup batches (0 → use warmup_fraction)
+    greedy_grad_plateau_patience: int = 500    # steps without local improvement → bump LR
+    greedy_grad_plateau_multiplier: float = 1.5  # LR multiplier on plateau escape
+    greedy_grad_plateau_cooldown: int = 500     # cooldown steps after plateau escape
     optimizer: str = 'adamw_fused'     # adamw_fused | adamw | sgd | nag | lion | sophia
     weight_decay: float = 0.01
     decay_linear_only: bool = True     # True → only Linear weights; False → all params
