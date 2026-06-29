@@ -70,11 +70,16 @@ def scan_models(sessions_dir: str = 'sessions') -> list[
 
     # New format: dir-per-model
     for root, dirs, files in os.walk(sessions_dir):
+        pth_file = None
         if 'model.pth' in files:
+            pth_file = 'model.pth'
+        elif 'best.pth' in files:
+            pth_file = 'best.pth'
+        if pth_file is not None:
             rel = os.path.relpath(root, sessions_dir)
             parts = rel.split(os.sep)
             folder = parts[0] if len(parts) > 1 else rel  # top-level experiment
-            full = os.path.join(root, 'model.pth')
+            full = os.path.join(root, pth_file)
             sizes = parse_key(full)
             if len(sizes) >= 3:
                 n_params = count_params(sizes)
