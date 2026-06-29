@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import random
+from collections import deque
+
+import numpy as np
 import torch
 
 
@@ -375,6 +379,128 @@ class GreedyDiffLR:
         self._base_lr = sd.get('_base_lr', self._base_lr)
 
 
+# ── GreedyGradLR (gradient-descent on LR) ────────────────
+
+class GreedyGradLR:
+    """Adaptive LR via online gradient descent w.r.t. LR.
+
+    Estimates ∂loss/∂lr through linear regression over a sliding
+    window of (loss, lr) pairs, then takes a normalised step against
+    the gradient.  Heavy momentum (default 0.995) smooths the update
+    path, and random exploration kicks in when the gradient vanishes.
+
+    Key differences from GreedyDiffLR:
+      - Updates EVERY batch (no packet aggregation)
+      - Single regression instead of cascaded finite differences
+      - Multiplicative LR update (percentage change, not additive)
+      - Momentum on Δlr (damped feedback, not undamped lr')
+    """
+
+    uses_loss = True
+
+    def __init__(self, optimizer, window=50, alpha=0.01, momentum=0.995,
+                 explore=0.01, min_lr=1e-7, max_lr=0.3,
+                 warmup_steps=0, warmup_start_factor=0.1):
+        self.optimizer = optimizer
+        self.window = max(1, window)
+        self.alpha = alpha
+        self.momentum = momentum
+        self.explore = explore
+        self.min_lr = min_lr
+        self.max_lr = max_lr
+        self._base_lr = optimizer.param_groups[0]['lr']
+        self._step = 0
+        self._warmup_steps = warmup_steps
+        self._warmup_start_factor = warmup_start_factor
+
+        self._loss_buf = deque(maxlen=window)
+        self._lr_buf = deque(maxlen=window)
+        self._lr_change = 0.0
+
+        if warmup_steps > 0:
+            for pg in self.optimizer.param_groups:
+                pg['lr'] = self._base_lr * warmup_start_factor
+
+    def step(self, loss):
+        self._step += 1
+        cur_lr = self.optimizer.param_groups[0]['lr']
+        self._loss_buf.append(loss)
+        self._lr_buf.append(cur_lr)
+
+        # Warmup: linear ramp
+        if self._step < self._warmup_steps:
+            progress = self._step / max(1, self._warmup_steps)
+            lr = self._base_lr * (self._warmup_start_factor
+                                  + (1.0 - self._warmup_start_factor) * progress)
+            for pg in self.optimizer.param_groups:
+                pg['lr'] = lr
+            return
+
+        if len(self._loss_buf) < self.window:
+            return
+
+        # Linear regression: ∂loss/∂lr via chain rule
+        x = np.arange(self.window, dtype=np.float64)
+        y_loss = np.array(list(self._loss_buf), dtype=np.float64)
+        y_lr = np.array(list(self._lr_buf), dtype=np.float64)
+
+        x_mean = np.mean(x)
+        var_x = np.var(x)
+        if var_x < 1e-20:
+            return
+
+        cov_loss = np.mean((x - x_mean) * (y_loss - np.mean(y_loss)))
+        cov_lr = np.mean((x - x_mean) * (y_lr - np.mean(y_lr)))
+
+        if abs(cov_lr) < 1e-20:
+            # LR hasn't moved meaningfully — explore
+            delta = random.uniform(-self.explore, self.explore)
+            new_lr = cur_lr * (1.0 + delta)
+        else:
+            derivative = cov_loss / cov_lr
+            if abs(derivative) < 1e-12:
+                delta = random.uniform(-self.explore, self.explore)
+                new_lr = cur_lr * (1.0 + delta)
+            else:
+                step = -self.alpha * derivative / (abs(derivative) + 1.0)
+                step = np.clip(step, -0.2, 0.2)
+                self._lr_change = (self.momentum * self._lr_change
+                                   + (1.0 - self.momentum) * float(step))
+                new_lr = cur_lr * (1.0 + self._lr_change)
+
+        new_lr = max(self.min_lr, min(self.max_lr, new_lr))
+        for pg in self.optimizer.param_groups:
+            pg['lr'] = new_lr
+
+    # ── Debug ──────────────────────────────────────────────
+
+    def get_debug_info(self) -> dict | None:
+        if len(self._loss_buf) < 2:
+            return None
+        return {
+            'lr': self.optimizer.param_groups[0]['lr'],
+            'lr_change': float(self._lr_change),
+        }
+
+    # ── Checkpointing ──────────────────────────────────────
+
+    def state_dict(self):
+        return {
+            '_loss_buf': list(self._loss_buf),
+            '_lr_buf': list(self._lr_buf),
+            '_lr_change': self._lr_change,
+            '_step': self._step,
+            '_base_lr': self._base_lr,
+        }
+
+    def load_state_dict(self, sd):
+        self._loss_buf = deque(sd['_loss_buf'], maxlen=self.window)
+        self._lr_buf = deque(sd['_lr_buf'], maxlen=self.window)
+        self._lr_change = sd['_lr_change']
+        self._step = sd['_step']
+        self._base_lr = sd.get('_base_lr', self._base_lr)
+
+
 # ── Builder ───────────────────────────────────────────────
 
 def build_scheduler(optimizer, train_config, total_steps: int,
@@ -434,6 +560,20 @@ def build_scheduler(optimizer, train_config, total_steps: int,
             warmup_steps=wsteps,
         )
         return gd, None
+
+    if scheduler == "greedy_grad":
+        wsteps = tc.greedy_grad_warmup
+        if wsteps == 0:
+            wsteps = warmup_steps  # fallback: use warmup_fraction
+        if start_samples > 0:
+            wsteps = 0  # skip warmup on resume
+        gg = GreedyGradLR(
+            optimizer, window=tc.greedy_grad_window, alpha=tc.greedy_grad_alpha,
+            momentum=tc.greedy_grad_momentum, explore=tc.greedy_grad_explore,
+            min_lr=tc.greedy_grad_min_lr, max_lr=tc.greedy_grad_max_lr,
+            warmup_steps=wsteps,
+        )
+        return gg, None
 
     return None, None
 

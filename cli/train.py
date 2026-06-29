@@ -85,7 +85,7 @@ Examples:
     p.add_argument('--batch-size', type=int, default=256)
     p.add_argument('--lr', type=float, default=0.001)
     p.add_argument('--scheduler', default='onecycle',
-                   choices=['onecycle', 'plateau', 'cosine', 'greedy', 'none'])
+                   choices=['onecycle', 'plateau', 'cosine', 'greedy', 'greedy_diff', 'greedy_grad', 'none'])
     p.add_argument('--optimizer', default='adamw_fused',
                    choices=['adamw_fused', 'adamw', 'sgd', 'nag', 'lion', 'sophia'])
     p.add_argument('--weight-decay', type=float, default=0.01)
@@ -95,6 +95,14 @@ Examples:
                    help='OneCycle peak position (default 0.3, lower = earlier peak)')
     p.add_argument('--plateau-patience', type=int, default=10,
                    help='Plateau patience (checkpoints)')
+    # greedy / greedy_grad shared CLI args
+    p.add_argument('--greedy-grad-window', type=int, default=50)
+    p.add_argument('--greedy-grad-alpha', type=float, default=0.01)
+    p.add_argument('--greedy-grad-momentum', type=float, default=0.995)
+    p.add_argument('--greedy-grad-explore', type=float, default=0.01)
+    p.add_argument('--greedy-grad-min-lr', type=float, default=1e-7)
+    p.add_argument('--greedy-grad-max-lr', type=float, default=0.3)
+    p.add_argument('--greedy-grad-warmup', type=int, default=0)
     p.add_argument('--num-workers', type=int, default=2)
     p.add_argument('--checkpoint-interval', type=int, default=100000,
                    help='Samples between validation/checkpoint passes')
@@ -255,6 +263,13 @@ def _cli_to_overrides(overrides):
         'num_workers': 'training.num_workers',
         'checkpoint_interval': 'training.checkpoint_interval',
         'train_ratio': 'training.train_ratio',
+        'greedy_grad_window': 'training.greedy_grad_window',
+        'greedy_grad_alpha': 'training.greedy_grad_alpha',
+        'greedy_grad_momentum': 'training.greedy_grad_momentum',
+        'greedy_grad_explore': 'training.greedy_grad_explore',
+        'greedy_grad_min_lr': 'training.greedy_grad_min_lr',
+        'greedy_grad_max_lr': 'training.greedy_grad_max_lr',
+        'greedy_grad_warmup': 'training.greedy_grad_warmup',
         'workspace': 'output.workspace',
         'device': 'output.device',
     }

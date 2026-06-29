@@ -45,7 +45,7 @@ class TrainConfig:
     batch_size: int = 256
     lr: float = 0.001
     grad_clip: float = 1.0
-    scheduler: str = 'onecycle'        # onecycle | plateau | cosine | greedy | greedy_diff | none
+    scheduler: str = 'onecycle'        # onecycle | plateau | cosine | greedy | greedy_diff | greedy_grad | none
     warmup_fraction: float = 0.02      # fraction of total steps for warmup
     pct_start: float = 0.3             # onecycle: fraction at which LR peaks
     plateau_patience: int = 10          # plateau: checkpoints without improvement
@@ -65,6 +65,14 @@ class TrainConfig:
     greedy_diff_min_lr: float = 1e-7
     greedy_diff_max_lr: float = 0.1
     greedy_diff_warmup: int = 0             # warmup batches (0 → use warmup_fraction)
+    # greedy_grad
+    greedy_grad_window: int = 50             # regression window (batches)
+    greedy_grad_alpha: float = 0.01           # base step size for gradient step
+    greedy_grad_momentum: float = 0.995        # momentum on Δlr
+    greedy_grad_explore: float = 0.01          # random exploration amplitude when ∇≈0
+    greedy_grad_min_lr: float = 1e-7
+    greedy_grad_max_lr: float = 0.3
+    greedy_grad_warmup: int = 0               # warmup batches (0 → use warmup_fraction)
     optimizer: str = 'adamw_fused'     # adamw_fused | adamw | sgd | nag | lion | sophia
     weight_decay: float = 0.01
     decay_linear_only: bool = True     # True → only Linear weights; False → all params
