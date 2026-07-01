@@ -204,6 +204,7 @@ def run_training(start_samples: int, max_samples: int, model, optimizer, criteri
                         sum_train_loss = 0.0
                         sum_train_count = 0
                         next_log = total_samples + LOG_INTERVAL
+                        next_update = total_samples + UPDATE_INTERVAL
 
                 if total_samples >= max_samples:
                     break
