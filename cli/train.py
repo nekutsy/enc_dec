@@ -95,7 +95,15 @@ Examples:
                    help='OneCycle peak position (default 0.3, lower = earlier peak)')
     p.add_argument('--plateau-patience', type=int, default=10,
                    help='Plateau patience (checkpoints)')
-    # greedy / greedy_grad shared CLI args
+    # greedy_simple CLI args
+    p.add_argument('--greedy-simple-warmup', type=int, default=0,
+                   help='Warmup batches for greedy_simple (0 = none)')
+    p.add_argument('--greedy-simple-min-lr', type=float, default=1e-6)
+    p.add_argument('--greedy-simple-max-lr', type=float, default=0.4)
+    p.add_argument('--greedy-simple-inc', type=float, default=1.01)
+    p.add_argument('--greedy-simple-dec', type=float, default=0.75)
+    p.add_argument('--greedy-simple-patience', type=int, default=500)
+    # greedy_grad CLI args
     p.add_argument('--greedy-grad-window', type=int, default=50)
     p.add_argument('--greedy-grad-alpha', type=float, default=0.01)
     p.add_argument('--greedy-grad-momentum', type=float, default=0.995)
@@ -173,6 +181,12 @@ Examples:
                 pct_start=args.pct_start,
                 plateau_patience=args.plateau_patience,
                 warmup_fraction=0.02,
+                greedy_simple_warmup=args.greedy_simple_warmup,
+                greedy_simple_min_lr=args.greedy_simple_min_lr,
+                greedy_simple_max_lr=args.greedy_simple_max_lr,
+                greedy_simple_inc=args.greedy_simple_inc,
+                greedy_simple_dec=args.greedy_simple_dec,
+                greedy_simple_patience=args.greedy_simple_patience,
                 greedy_grad_window=args.greedy_grad_window,
                 greedy_grad_alpha=args.greedy_grad_alpha,
                 greedy_grad_momentum=args.greedy_grad_momentum,
@@ -277,6 +291,12 @@ def _cli_to_overrides(overrides):
         'num_workers': 'training.num_workers',
         'checkpoint_interval': 'training.checkpoint_interval',
         'train_ratio': 'training.train_ratio',
+        'greedy_simple_warmup': 'training.greedy_simple_warmup',
+        'greedy_simple_min_lr': 'training.greedy_simple_min_lr',
+        'greedy_simple_max_lr': 'training.greedy_simple_max_lr',
+        'greedy_simple_inc': 'training.greedy_simple_inc',
+        'greedy_simple_dec': 'training.greedy_simple_dec',
+        'greedy_simple_patience': 'training.greedy_simple_patience',
         'greedy_grad_window': 'training.greedy_grad_window',
         'greedy_grad_alpha': 'training.greedy_grad_alpha',
         'greedy_grad_momentum': 'training.greedy_grad_momentum',
