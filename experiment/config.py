@@ -60,7 +60,7 @@ class TrainConfig:
     # greedy_simple
     greedy_simple_min_lr: float = 1e-6
     greedy_simple_max_lr: float = 0.4
-    greedy_simple_inc: float = 1.02         # increase factor on improvement
+    greedy_simple_inc: float = 1.01         # increase factor on improvement
     greedy_simple_dec: float = 0.75         # decrease factor on stall
     greedy_simple_patience: int = 500        # batches without improvement before decreasing
     # greedy_grad

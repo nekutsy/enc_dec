@@ -234,7 +234,7 @@ class GreedySimpleLR:
     uses_loss = True
 
     def __init__(self, optimizer, min_lr=1e-6, max_lr=0.4,
-                 increase_factor=1.02, decrease_factor=0.75,
+                 increase_factor=1.01, decrease_factor=0.75,
                  decrease_patience=500):
         self.optimizer = optimizer
         self.min_lr = min_lr
