@@ -53,7 +53,7 @@ class OptimizerLike(Protocol):
 
 @runtime_checkable
 class StepSchedulerLike(Protocol):
-    """Per-batch scheduler (OneCycle, Cosine, GreedyDiff)."""
+    """Per-batch scheduler (OneCycle, Cosine, GreedySimple, GreedyGrad)."""
 
     uses_loss: bool  # if True, step_batch passes loss.item()
 

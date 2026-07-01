@@ -85,7 +85,7 @@ Examples:
     p.add_argument('--batch-size', type=int, default=256)
     p.add_argument('--lr', type=float, default=0.001)
     p.add_argument('--scheduler', default='onecycle',
-                   choices=['onecycle', 'plateau', 'cosine', 'greedy', 'greedy_diff', 'greedy_grad', 'none'])
+                   choices=['onecycle', 'plateau', 'cosine', 'greedy', 'greedy_simple', 'greedy_grad', 'none'])
     p.add_argument('--optimizer', default='adamw_fused',
                    choices=['adamw_fused', 'adamw', 'sgd', 'nag', 'lion', 'sophia'])
     p.add_argument('--weight-decay', type=float, default=0.01)

@@ -54,7 +54,7 @@ def load_plat_scheduler(checkpoint_scheduler, model_path: str):
 def load_step_scheduler(step_scheduler, model_path: str):
     """Load step-scheduler state from model_path.step_sch.
 
-    Used for schedulers with state_dim (GreedyDiffLR).
+    Used for schedulers with state_dict (GreedySimpleLR, GreedyGradLR).
     Skips silently if file missing or no state_dict.
     """
     if step_scheduler is None:

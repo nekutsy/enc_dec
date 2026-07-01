@@ -132,8 +132,7 @@ def solve_d_for_n(n: int, target_params: int, D: int, B: int,
 MODEL_LEVEL_VARY = {'normalization', 'activation', 'dropout',
                     'norm_bottleneck', 'norm_last'}
 TRAIN_LEVEL_VARY = {'lr', 'scheduler', 'grad_clip', 'optimizer',
-                    'weight_decay', 'batch_size', 'num_workers',
-                    'greedy_diff_packet', 'greedy_diff_k'}
+                    'weight_decay', 'batch_size', 'num_workers'}
 
 
 def resolve_architecture(vary_value, vary_name: str,
