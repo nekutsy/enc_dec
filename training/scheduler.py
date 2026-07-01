@@ -225,6 +225,7 @@ class GreedySimpleLR:
       - Loss improved → immediately increase LR by `increase_factor`
       - Loss didn't improve → wait `decrease_patience` steps, then drop LR
         by `decrease_factor`
+      - LR hits min_lr → jump back to base_lr (restart cycle)
       - Clamp to [min_lr, max_lr]
 
     Compatible with checkpoint save/load via state_dict().
@@ -233,7 +234,7 @@ class GreedySimpleLR:
     uses_loss = True
 
     def __init__(self, optimizer, min_lr=1e-6, max_lr=0.4,
-                 increase_factor=1.01, decrease_factor=0.75,
+                 increase_factor=1.02, decrease_factor=0.75,
                  decrease_patience=500):
         self.optimizer = optimizer
         self.min_lr = min_lr
@@ -241,11 +242,13 @@ class GreedySimpleLR:
         self.increase_factor = increase_factor
         self.decrease_factor = decrease_factor
         self.decrease_patience = decrease_patience
+        self.base_lr = optimizer.param_groups[0]['lr']
         self.best_loss = float('inf')
         self.decrease_counter = 0
 
     def step(self, loss):
         cur_lr = self.optimizer.param_groups[0]['lr']
+
         if loss < self.best_loss:
             self.best_loss = loss
             self.decrease_counter = 0
@@ -255,18 +258,28 @@ class GreedySimpleLR:
             if self.decrease_counter >= self.decrease_patience:
                 new_lr = cur_lr * self.decrease_factor
                 self.decrease_counter = 0
+                # Hit floor → reset to base LR for a fresh cycle
+                if new_lr <= self.min_lr:
+                    new_lr = self.base_lr
+                    self.best_loss = float('inf')  # reset tracking for new cycle
             else:
                 new_lr = cur_lr
+
         new_lr = max(self.min_lr, min(self.max_lr, new_lr))
         for pg in self.optimizer.param_groups:
             pg['lr'] = new_lr
 
     def state_dict(self):
-        return {'best_loss': self.best_loss, 'decrease_counter': self.decrease_counter}
+        return {
+            'best_loss': self.best_loss,
+            'decrease_counter': self.decrease_counter,
+            'base_lr': self.base_lr,
+        }
 
     def load_state_dict(self, sd):
         self.best_loss = sd['best_loss']
         self.decrease_counter = sd['decrease_counter']
+        self.base_lr = sd.get('base_lr', self.base_lr)
 
 
 # ── GreedyGradLR (gradient-descent on LR) ────────────────
