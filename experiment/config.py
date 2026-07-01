@@ -63,6 +63,8 @@ class TrainConfig:
     greedy_simple_inc: float = 1.01         # increase factor on improvement
     greedy_simple_dec: float = 0.75         # decrease factor on stall
     greedy_simple_patience: int = 500        # batches without improvement before decreasing
+    greedy_simple_warmup: int = 0             # warmup batches (0 → no warmup)
+    greedy_simple_warmup_start: float = 0.1   # start factor for warmup ramp
     # greedy_grad
     greedy_grad_window: int = 50             # regression window (batches)
     greedy_grad_alpha: float = 0.01           # base step size for gradient step

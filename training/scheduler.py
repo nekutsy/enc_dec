@@ -222,6 +222,7 @@ class GreedySimpleLR:
     """Simple greedy LR scheduler — immediate raise, cautious decrease.
 
     Operates per-batch on train loss:
+      - Warmup phase: linear ramp from start_factor * base_lr to base_lr
       - Loss improved → immediately increase LR by `increase_factor`
       - Loss didn't improve → wait `decrease_patience` steps, then drop LR
         by `decrease_factor`
@@ -235,7 +236,8 @@ class GreedySimpleLR:
 
     def __init__(self, optimizer, min_lr=1e-6, max_lr=0.4,
                  increase_factor=1.01, decrease_factor=0.75,
-                 decrease_patience=500):
+                 decrease_patience=500,
+                 warmup_steps=0, warmup_start_factor=0.1):
         self.optimizer = optimizer
         self.min_lr = min_lr
         self.max_lr = max_lr
@@ -243,11 +245,27 @@ class GreedySimpleLR:
         self.decrease_factor = decrease_factor
         self.decrease_patience = decrease_patience
         self.base_lr = optimizer.param_groups[0]['lr']
+        self.warmup_steps = warmup_steps
+        self.warmup_start_factor = warmup_start_factor
+        self._step = 0
         self.best_loss = float('inf')
         self.decrease_counter = 0
 
+        if warmup_steps > 0:
+            for pg in self.optimizer.param_groups:
+                pg['lr'] = self.base_lr * warmup_start_factor
+
     def step(self, loss):
+        self._step += 1
         cur_lr = self.optimizer.param_groups[0]['lr']
+
+        # ── Warmup: linear ramp ──
+        if self._step <= self.warmup_steps:
+            p = (self._step - 1) / max(1, self.warmup_steps - 1) if self.warmup_steps > 1 else 1.0
+            new_lr = self.base_lr * (self.warmup_start_factor + (1.0 - self.warmup_start_factor) * p)
+            for pg in self.optimizer.param_groups:
+                pg['lr'] = new_lr
+            return
 
         if loss < self.best_loss:
             self.best_loss = loss
@@ -274,12 +292,14 @@ class GreedySimpleLR:
             'best_loss': self.best_loss,
             'decrease_counter': self.decrease_counter,
             'base_lr': self.base_lr,
+            '_step': self._step,
         }
 
     def load_state_dict(self, sd):
         self.best_loss = sd['best_loss']
         self.decrease_counter = sd['decrease_counter']
         self.base_lr = sd.get('base_lr', self.base_lr)
+        self._step = sd.get('_step', 0)
 
 
 # ── GreedyGradLR (gradient-descent on LR) ────────────────
@@ -508,10 +528,16 @@ def build_scheduler(optimizer, train_config, total_steps: int,
         return warmup, greedy
 
     if scheduler == "greedy_simple":
+        wsteps = tc.greedy_simple_warmup
+        if wsteps == 0:
+            wsteps = warmup_steps  # fallback: use warmup_fraction
+        if start_samples > 0:
+            wsteps = 0  # skip warmup on resume
         gs = GreedySimpleLR(
             optimizer, min_lr=tc.greedy_simple_min_lr, max_lr=tc.greedy_simple_max_lr,
             increase_factor=tc.greedy_simple_inc, decrease_factor=tc.greedy_simple_dec,
             decrease_patience=tc.greedy_simple_patience,
+            warmup_steps=wsteps, warmup_start_factor=tc.greedy_simple_warmup_start,
         )
         return gs, None
 
