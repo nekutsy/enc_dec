@@ -46,6 +46,42 @@ def make_pyramid(input_dim: int, bottleneck: int, n_hidden: int,
     return enc + dec
 
 
+def make_interleaved(input_dim: int, hidden_dim: int, bottleneck: int,
+                     n: int) -> list[int]:
+    """Wide (hidden_dim) layers alternate with pyramid layers.
+
+    Pyramid layers linearly interpolate from input_dim to bottleneck.
+    n = number of wide layers per side.
+
+    n=3, bottleneck=input_dim*0.25:
+      input → hidden → pyr(0.75) → hidden → pyr(0.5) → hidden → bottleneck
+           → hidden → pyr(0.5) → hidden → pyr(0.75) → hidden → input
+    """
+    assert n >= 1, f"n must be >= 1, got {n}"
+    if n == 1:
+        return [input_dim, hidden_dim, bottleneck, hidden_dim, input_dim]
+
+    step = (input_dim - bottleneck) / n
+
+    enc_pyr = [int(input_dim - i * step) for i in range(1, n)]
+    dec_pyr = list(reversed(enc_pyr))
+
+    enc: list[int] = [input_dim]
+    for pyr in enc_pyr:
+        enc.append(hidden_dim)
+        enc.append(pyr)
+    enc.append(hidden_dim)
+    enc.append(bottleneck)
+
+    dec: list[int] = [hidden_dim]
+    for pyr in dec_pyr:
+        dec.append(pyr)
+        dec.append(hidden_dim)
+    dec.append(input_dim)
+
+    return enc + dec
+
+
 # ── Budget-constrained solvers ──────────────────────────────
 
 def solve_b_for_n(n_hidden: int, target_params: int, input_dim: int,
@@ -99,6 +135,58 @@ def solve_n_for_b(b_val: float, target_params: int, input_dim: int,
     return n, h, _p(n)
 
 
+def solve_b_for_n_interleaved(n: int, target_params: int, input_dim: int,
+                               bottleneck: int
+                               ) -> tuple[float, int, int]:
+    """Binary search b ∈ [0.1, 20] for interleaved architecture.
+
+    Returns (b, hidden_dim, n_params).
+    """
+    def _p(b_val):
+        h = max(1, int(round(input_dim * b_val)))
+        return count_params(make_interleaved(input_dim, h, bottleneck, n))
+
+    lo, hi = 0.1, 20.0
+    for _ in range(30):
+        mid = (lo + hi) / 2
+        if _p(mid) < target_params:
+            lo = mid
+        else:
+            hi = mid
+
+    p_lo, p_hi = _p(lo), _p(hi)
+    b_val = (round(lo, 6) if abs(p_lo - target_params) <= abs(p_hi - target_params)
+             else round(hi, 6))
+    h = max(1, int(round(input_dim * b_val)))
+    return b_val, h, _p(b_val)
+
+
+def solve_n_for_b_interleaved(b_val: float, target_params: int, input_dim: int,
+                               bottleneck: int, max_n: int = 20
+                               ) -> tuple[int, int, int]:
+    """Binary search n ∈ [1, max_n] for interleaved architecture.
+
+    Returns (n, hidden_dim, n_params).
+    """
+    def _p(n):
+        h = max(1, int(round(input_dim * b_val)))
+        return count_params(make_interleaved(input_dim, h, bottleneck, int(n)))
+
+    lo, hi = 1, max_n
+    for _ in range(30):
+        mid = int((lo + hi) // 2)
+        if _p(mid) < target_params:
+            lo = mid + 1
+        else:
+            hi = mid
+
+    p_lo, p_hi = _p(lo), _p(hi)
+    n = lo if abs(p_lo - target_params) <= abs(p_hi - target_params) else hi
+    n = max(1, min(n, max_n))
+    h = max(1, int(round(input_dim * b_val)))
+    return n, h, _p(n)
+
+
 def solve_d_for_n(n: int, target_params: int, D: int, B: int,
                   max_d: float | None = None
                   ) -> tuple[float, int, int]:
@@ -130,7 +218,7 @@ def solve_d_for_n(n: int, target_params: int, D: int, B: int,
 # ── Vary categories ─────────────────────────────────────────
 
 MODEL_LEVEL_VARY = {'normalization', 'activation', 'dropout',
-                    'norm_bottleneck', 'norm_last'}
+                    'norm_bottleneck', 'norm_last', 'bottleneck'}
 TRAIN_LEVEL_VARY = {'lr', 'scheduler', 'grad_clip', 'optimizer',
                     'weight_decay', 'batch_size', 'num_workers'}
 
@@ -199,6 +287,44 @@ def resolve_architecture(vary_value, vary_name: str,
         else:
             raise ValueError(
                 "Pyramid shape needs solve=b with n, or n+b fixed")
+
+    # ── Interleaved shape ──
+    if shape == 'interleaved':
+        if sc.solve == 'b':
+            assert n is not None, "need fixed n when solve=b"
+            b_val, hidden_dim, n_params = solve_b_for_n_interleaved(
+                n, budget, input_dim, bottleneck)
+        elif sc.solve == 'n':
+            assert b_val is not None, "need fixed b when solve=n"
+            n, hidden_dim, n_params = solve_n_for_b_interleaved(
+                b_val, budget, input_dim, bottleneck)
+        elif n is not None and b_val is not None:
+            hidden_dim = max(1, int(round(input_dim * b_val)))
+            n_params = count_params(
+                make_interleaved(input_dim, hidden_dim, bottleneck, n))
+        elif n is not None:
+            raise ValueError(
+                f"n={n} given but no solve/b — cannot determine hidden_dim")
+        elif b_val is not None:
+            hidden_dim = max(1, int(round(input_dim * b_val)))
+            if budget is not None:
+                n, _, _ = solve_n_for_b_interleaved(
+                    b_val, budget, input_dim, bottleneck)
+            else:
+                n = 1
+            n_params = count_params(
+                make_interleaved(input_dim, hidden_dim, bottleneck, n))
+        else:
+            raise ValueError(
+                "Interleaved shape needs n+b, or solve+fixed")
+
+        sizes = make_interleaved(input_dim, hidden_dim, bottleneck, n)
+        n_params = count_params(sizes)
+        return {
+            'sizes': sizes,
+            'b': round(hidden_dim / input_dim, 6) if b_val is None else b_val,
+            'n': n, 'hidden_dim': hidden_dim, 'n_params': n_params,
+        }
 
     # ── Rectangular shape ──
     if sc.solve == 'b':

@@ -25,7 +25,7 @@ class ModelConfig:
     bottleneck: int | None = None      # None → seq_len
     activation: str = 'silu'           # silu | relu | gelu | leaky_relu
     normalization: str = 'batchnorm'   # batchnorm | layernorm | none
-    shape: str = 'rectangular'         # rectangular | pyramid
+    shape: str = 'rectangular'         # rectangular | pyramid | interleaved
     init: str = 'orthogonal'           # orthogonal | xavier | kaiming
     init_gain: float = 1.0
     dropout: float = 0.0
