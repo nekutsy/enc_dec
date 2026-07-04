@@ -116,6 +116,51 @@ class SlidingWindowDataset(Dataset):
         return w, w
 
 
+class NoisyDataset(Dataset):
+    """Wraps a SlidingWindowDataset — adds uint21-level Gaussian noise to inputs.
+
+    For each character (21-bit group) in the input window:
+      1. Convert 21 bits → uint21 value
+      2. With probability noise_prob, add N(0, noise_std²)
+      3. Round to nearest integer, clamp to [0, 2²¹−1]
+      4. Convert back to 21 bits
+
+    Target (y) stays clean — model must denoise.
+    """
+
+    def __init__(self, base_dataset, noise_prob=0.05, noise_std=3.0, seed=None):
+        self.base = base_dataset
+        self.noise_prob = noise_prob
+        self.noise_std = noise_std
+        self._rng = np.random.default_rng(seed)
+        self._powers = 2 ** torch.arange(UNICODE_BITS, dtype=torch.float32)
+        self._max_val = (1 << UNICODE_BITS) - 1
+
+    def __len__(self):
+        return len(self.base)
+
+    def __getitem__(self, idx):
+        x, y = self.base[idx]
+        noisy_x = self._add_noise(x, self.base.seq_len)
+        return noisy_x, y
+
+    def _add_noise(self, bits, seq_len):
+        chars = bits.view(seq_len, UNICODE_BITS)
+        uints = (chars @ self._powers).long()
+
+        r = self._rng.random(seq_len)
+        noise_mask = torch.from_numpy(r < self.noise_prob).to(torch.long)
+        noise_vals = torch.from_numpy(
+            self._rng.normal(0, self.noise_std, seq_len)).float()
+
+        noisy = uints.float() + noise_mask.float() * noise_vals
+        noisy = torch.round(noisy).long().clamp(0, self._max_val)
+
+        bit_positions = torch.arange(UNICODE_BITS)
+        noisy_bits = ((noisy.unsqueeze(-1) >> bit_positions) & 1).float().flatten()
+        return noisy_bits
+
+
 # Re-exported from encoding.unicode21 for backward compatibility
 chars_to_bits = chars_to_bits  # already imported above
 vec2seq = vec_to_seq

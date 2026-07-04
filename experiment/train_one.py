@@ -14,7 +14,7 @@ import torch.nn as nn
 
 from configs import UNICODE_BITS
 from model import Autoencoder
-from data import prepare_data
+from data import prepare_data, NoisyDataset
 from training import (
     run_training, build_scheduler,
     save_checkpoint, load_optimizer, load_plat_scheduler, load_step_scheduler,
@@ -183,6 +183,12 @@ def train_one(arch: dict, sweep_config: SweepConfig, model_prefix: str,
 
     # ── Data ──
     train_ds, val_ds = prepare_data(text, seq_len, tc.train_ratio)
+
+    # ── Noise ──
+    if tc.noise_prob > 0.0:
+        train_ds = NoisyDataset(
+            train_ds, noise_prob=tc.noise_prob, noise_std=tc.noise_std)
+        print(f'  noise: prob={tc.noise_prob}, std={tc.noise_std}')
 
     # ── Model ──
     try:

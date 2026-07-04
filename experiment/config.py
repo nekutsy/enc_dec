@@ -80,6 +80,8 @@ class TrainConfig:
     optimizer: str = 'adamw_fused'     # adamw_fused | adamw | sgd | nag | lion | sophia
     weight_decay: float = 0.01
     decay_linear_only: bool = True     # True → only Linear weights; False → all params
+    noise_prob: float = 0.0              # 0→disabled; fraction of symbols perturbed
+    noise_std: float = 3.0               # σ for Gaussian noise on uint21 values
     early_stop_patience: int = 20
     train_ratio: float = 0.999
     checkpoint_interval: int = 100_000   # samples between validation/checkpoint passes

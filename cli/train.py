@@ -117,6 +117,8 @@ Examples:
     p.add_argument('--greedy-grad-plateau-multiplier', type=float, default=1.5)
     p.add_argument('--greedy-grad-plateau-cooldown', type=int, default=500)
     p.add_argument('--num-workers', type=int, default=2)
+    p.add_argument('--noise-prob', type=float, default=0.0)
+    p.add_argument('--noise-std', type=float, default=3.0)
     p.add_argument('--checkpoint-interval', type=int, default=100000,
                    help='Samples between validation/checkpoint passes')
     p.add_argument('--train-ratio', type=float, default=0.999)
@@ -201,6 +203,8 @@ Examples:
                 greedy_grad_plateau_multiplier=args.greedy_grad_plateau_multiplier,
                 greedy_grad_plateau_cooldown=args.greedy_grad_plateau_cooldown,
                 num_workers=args.num_workers,
+                noise_prob=args.noise_prob,
+                noise_std=args.noise_std,
                 checkpoint_interval=args.checkpoint_interval,
                 train_ratio=args.train_ratio,
             ),
@@ -293,6 +297,8 @@ def _cli_to_overrides(overrides):
         'pct_start': 'training.pct_start',
         'plateau_patience': 'training.plateau_patience',
         'num_workers': 'training.num_workers',
+        'noise_prob': 'training.noise_prob',
+        'noise_std': 'training.noise_std',
         'checkpoint_interval': 'training.checkpoint_interval',
         'train_ratio': 'training.train_ratio',
         'greedy_simple_warmup': 'training.greedy_simple_warmup',
