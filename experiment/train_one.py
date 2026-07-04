@@ -151,6 +151,12 @@ def train_one(arch: dict, sweep_config: SweepConfig, model_prefix: str,
         'n_hidden': arch['n'],
         'experiment': os.path.basename(ws),
         'model_name': model_prefix,
+        'activation': mc.activation,
+        'normalization': mc.normalization,
+        'init_gain': mc.init_gain,
+        'dropout': mc.dropout,
+        'norm_bottleneck': mc.norm_bottleneck,
+        'norm_last': mc.norm_last,
     }
     from datetime import datetime, timezone
     meta['created'] = datetime.now(timezone.utc).isoformat()

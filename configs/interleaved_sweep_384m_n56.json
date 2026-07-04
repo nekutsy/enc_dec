@@ -1,0 +1,46 @@
+{
+  "name": "interleaved_sweep_384m_n56",
+  "model": {
+    "seq_len": 128,
+    "bottleneck": 160,
+    "shape": "interleaved",
+    "activation": "silu",
+    "normalization": "batchnorm",
+    "init_gain": 1.0,
+    "dropout": 0.001,
+    "norm_bottleneck": false,
+    "norm_last": false
+  },
+  "training": {
+    "target_samples": 10000000,
+    "batch_size": 256,
+    "lr": 0.0001,
+    "grad_clip": 1.0,
+    "scheduler": "greedy_simple",
+    "warmup_fraction": 0.02,
+    "optimizer": "lion",
+    "weight_decay": 0.01,
+    "decay_linear_only": true,
+    "early_stop_patience": 20,
+    "train_ratio": 0.999,
+    "num_workers": 2,
+    "greedy_simple_warmup": 1953,
+    "greedy_simple_min_lr": 1e-6,
+    "greedy_simple_max_lr": 0.4,
+    "greedy_simple_inc": 1.01,
+    "greedy_simple_dec": 0.75,
+    "greedy_simple_patience": 500
+  },
+  "sweep": {
+    "strategy": "grid",
+    "vary": "n",
+    "values": [5, 6],
+    "solve": "b",
+    "budget": 384000000
+  },
+  "output": {
+    "workspace": "sessions/interleaved_sweep_n56",
+    "sweep_log": "sessions/interleaved_sweep_n56_summary.csv",
+    "device": "auto"
+  }
+}

@@ -71,6 +71,8 @@ Examples:
     p.add_argument('--seq-len', type=int, default=128)
     p.add_argument('--n', type=int, default=None, help='n_hidden layers')
     p.add_argument('--b', type=float, default=None, help='width ratio (hidden_dim / input_dim)')
+    p.add_argument('--shape', default='rectangular', choices=['rectangular', 'pyramid', 'interleaved'],
+                   help='Architecture shape')
     p.add_argument('--budget', type=str, default=None, help='Target params, e.g. 160M')
     p.add_argument('--bottleneck', type=int, default=None)
     p.add_argument('--activation', default='silu', choices=['silu', 'relu', 'gelu', 'leaky_relu'])
@@ -162,6 +164,7 @@ Examples:
             model=ModelConfig(
                 seq_len=args.seq_len,
                 bottleneck=args.bottleneck,
+                shape=args.shape,
                 activation=args.activation,
                 normalization=args.normalization,
                 init_gain=args.init_gain,
@@ -279,6 +282,7 @@ def _cli_to_overrides(overrides):
         'dropout': 'model.dropout',
         'norm_bottleneck': 'model.norm_bottleneck',
         'norm_last': 'model.norm_last',
+        'shape': 'model.shape',
         'batch_size': 'training.batch_size',
         'lr': 'training.lr',
         'scheduler': 'training.scheduler',

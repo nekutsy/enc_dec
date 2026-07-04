@@ -11,8 +11,10 @@ For new code, import directly from:
 from training.optimizers import Lion, Sophia, build_optimizer             # noqa: F401
 from model.architecture import (                                          # noqa: F401
     count_params, make_rectangular, make_pyramid, make_interleaved,
+    make_trapezoid,
     solve_b_for_n, solve_n_for_b, solve_d_for_n,
     solve_b_for_n_interleaved, solve_n_for_b_interleaved,
+    solve_b_for_n_trapezoid,
     resolve_architecture, MODEL_LEVEL_VARY, TRAIN_LEVEL_VARY,
 )
 from experiment.context import RuntimeContext, setup_runtime              # noqa: F401

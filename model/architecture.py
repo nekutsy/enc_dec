@@ -46,6 +46,38 @@ def make_pyramid(input_dim: int, bottleneck: int, n_hidden: int,
     return enc + dec
 
 
+def make_trapezoid(input_dim: int, hidden_dim: int, bottleneck: int,
+                   n_hidden: int, alpha: float) -> list[int]:
+    """Trapezoid: layer widths linearly interpolate from hd×(1+α) to hd×(1−α).
+
+    n_hidden layers per side, each at width:
+      hd × (1 + α − 2α·(i−1)/(n−1))   for i ∈ [1, n_hidden]
+
+    n_hidden=4, α=0.1:
+      input → hd×1.1 → hd×1.033 → hd×0.967 → hd×0.9 → bottleneck
+           → hd×0.9 → hd×0.967 → hd×1.033 → hd×1.1 → input
+    """
+    assert n_hidden >= 1
+    if n_hidden == 1:
+        return [input_dim, hidden_dim, bottleneck, hidden_dim, input_dim]
+
+    def _width(i):
+        frac = (i - 1) / (n_hidden - 1)
+        return int(round(hidden_dim * (1 + alpha - 2 * alpha * frac)))
+
+    enc: list[int] = [input_dim]
+    for i in range(1, n_hidden + 1):
+        enc.append(_width(i))
+    enc.append(bottleneck)
+
+    dec: list[int] = []
+    for i in range(n_hidden, 0, -1):
+        dec.append(_width(i))
+    dec.append(input_dim)
+
+    return enc + dec
+
+
 def make_interleaved(input_dim: int, hidden_dim: int, bottleneck: int,
                      n: int) -> list[int]:
     """Wide (hidden_dim) layers alternate with pyramid layers.
@@ -83,6 +115,32 @@ def make_interleaved(input_dim: int, hidden_dim: int, bottleneck: int,
 
 
 # ── Budget-constrained solvers ──────────────────────────────
+
+def solve_b_for_n_trapezoid(n_hidden: int, target_params: int, input_dim: int,
+                              bottleneck: int, alpha: float
+                              ) -> tuple[float, int, int]:
+    """Binary search b ∈ [0.1, 20] for trapezoid architecture.
+
+    Returns (b, hidden_dim, n_params).
+    """
+    def _p(b_val):
+        h = max(1, int(round(input_dim * b_val)))
+        return count_params(make_trapezoid(input_dim, h, bottleneck, n_hidden, alpha))
+
+    lo, hi = 0.1, 20.0
+    for _ in range(30):
+        mid = (lo + hi) / 2
+        if _p(mid) < target_params:
+            lo = mid
+        else:
+            hi = mid
+
+    p_lo, p_hi = _p(lo), _p(hi)
+    b_val = (round(lo, 6) if abs(p_lo - target_params) <= abs(p_hi - target_params)
+             else round(hi, 6))
+    h = max(1, int(round(input_dim * b_val)))
+    return b_val, h, _p(b_val)
+
 
 def solve_b_for_n(n_hidden: int, target_params: int, input_dim: int,
                   bottleneck: int) -> tuple[float, int, int]:
@@ -218,7 +276,8 @@ def solve_d_for_n(n: int, target_params: int, D: int, B: int,
 # ── Vary categories ─────────────────────────────────────────
 
 MODEL_LEVEL_VARY = {'normalization', 'activation', 'dropout',
-                    'norm_bottleneck', 'norm_last', 'bottleneck'}
+                    'norm_bottleneck', 'norm_last', 'bottleneck',
+                    'trapezoid_alpha'}
 TRAIN_LEVEL_VARY = {'lr', 'scheduler', 'grad_clip', 'optimizer',
                     'weight_decay', 'batch_size', 'num_workers'}
 
@@ -261,6 +320,32 @@ def resolve_architecture(vary_value, vary_name: str,
     n = fixed.get('n', None)
     b_val = fixed.get('b', None)
     budget = sc.budget
+
+    # ── Trapezoid shape ──
+    if shape == 'trapezoid':
+        alpha = getattr(mc, 'trapezoid_alpha', 0.1)
+        if sc.solve == 'b':
+            assert n is not None, "need fixed n when solve=b"
+            b_val, hidden_dim, n_params = solve_b_for_n_trapezoid(
+                n, budget, input_dim, bottleneck, alpha)
+        elif sc.solve == 'n':
+            raise NotImplementedError(
+                "solve=n not supported for trapezoid shape")
+        elif n is not None and b_val is not None:
+            hidden_dim = max(1, int(round(input_dim * b_val)))
+            n_params = count_params(
+                make_trapezoid(input_dim, hidden_dim, bottleneck, n, alpha))
+        else:
+            raise ValueError(
+                "Trapezoid shape needs solve=b with n, or n+b fixed")
+
+        sizes = make_trapezoid(input_dim, hidden_dim, bottleneck, n, alpha)
+        n_params = count_params(sizes)
+        return {
+            'sizes': sizes,
+            'b': round(hidden_dim / input_dim, 6) if b_val is None else b_val,
+            'n': n, 'hidden_dim': hidden_dim, 'n_params': n_params,
+        }
 
     # ── Pyramid shape ──
     if shape == 'pyramid':

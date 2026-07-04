@@ -113,12 +113,27 @@ def load_model(path: str, sizes: list[int],
     Handles compiled-model state_dict (_orig_mod prefix unwrapping).
     Parses norm flags from filename.
     """
-    import torch
+    import torch, json
     from model import Autoencoder
 
     dev = torch.device(device) if device else torch.device('cpu')
-    nb, nl = parse_norm_from_name(path)
-    model = Autoencoder(sizes, norm_bottleneck=nb, norm_last=nl).to(dev)
+
+    # Read model config from meta.json
+    model_dir = os.path.dirname(path)
+    meta_path = os.path.join(model_dir, 'model.meta.json')
+    kwargs = {}
+    if os.path.isfile(meta_path):
+        with open(meta_path) as f:
+            meta = json.load(f)
+        for k in ('activation', 'normalization', 'init_gain', 'dropout',
+                  'norm_bottleneck', 'norm_last'):
+            if k in meta:
+                kwargs[k] = meta[k]
+    else:
+        nb, nl = parse_norm_from_name(path)
+        kwargs = {'norm_bottleneck': nb, 'norm_last': nl}
+
+    model = Autoencoder(sizes, **kwargs).to(dev)
     state = torch.load(path, map_location=dev, weights_only=True)
     if any(k.startswith('_orig_mod.') for k in state.keys()):
         state = {k[len('_orig_mod.'):]: v for k, v in state.items()}
