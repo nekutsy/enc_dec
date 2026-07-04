@@ -279,7 +279,8 @@ MODEL_LEVEL_VARY = {'normalization', 'activation', 'dropout',
                     'norm_bottleneck', 'norm_last', 'bottleneck',
                     'trapezoid_alpha'}
 TRAIN_LEVEL_VARY = {'lr', 'scheduler', 'grad_clip', 'optimizer',
-                    'weight_decay', 'batch_size', 'num_workers'}
+                    'weight_decay', 'batch_size', 'num_workers',
+                    'noise_prob', 'noise_std'}
 
 
 def resolve_architecture(vary_value, vary_name: str,
