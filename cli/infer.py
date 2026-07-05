@@ -79,15 +79,15 @@ def main(device_override: torch.device | None = None):
 
     # ── Display ──
     print(f"\n{'#':>3}  {'n_params':>12}  {'seq_len':>8}  "
-          f"{'n_hidden':>8}  {'folder':>25}  file")
-    print("-" * 100)
-    for i, (path, sizes, n_params, folder) in enumerate(models):
+          f"{'n_hidden':>8}  {'model':>35}  file")
+    print("-" * 110)
+    for i, (path, sizes, n_params, label) in enumerate(models):
         mid = len(sizes) // 2
         seq_len = sizes[0] // UNICODE_BITS
         n_hidden = mid - 1
         fname = os.path.basename(path)
         print(f"{i:>3}  {n_params:>12,}  {seq_len:>8}  "
-              f"{n_hidden:>8}  {folder:>25}  {fname[:60]}")
+              f"{n_hidden:>8}  {label:>35}  {fname[:60]}")
 
     # ── Help ──
     print(f"\nEnc: enc <text|random|@pos> | Dec: dec | Show latent: z")
@@ -247,7 +247,7 @@ def main(device_override: torch.device | None = None):
             if idx < 0 or idx >= len(models):
                 print(f"#{idx} out of range (0–{len(models) - 1})")
                 continue
-            path, sizes, n_params, folder = models[idx]
+            path, sizes, n_params, label = models[idx]
             sl = sizes[0] // UNICODE_BITS
             print(f"Loaded #{idx}: s{sl}, {n_params:,} params")
             loaded_model = load_model(path, sizes, str(device))
@@ -270,7 +270,7 @@ def main(device_override: torch.device | None = None):
                 if idx < 0 or idx >= len(models):
                     print(f"  #{idx} out of range")
                     continue
-                path, sizes, n_params, folder = models[idx]
+                path, sizes, n_params, label = models[idx]
                 sl = sizes[0] // UNICODE_BITS
                 print(f"  #{idx} (s{sl}, {n_params // 10**6:.0f}M)...",
                       end=' ', flush=True)

@@ -57,6 +57,17 @@ def count_params(sizes: list[int]) -> int:
     return n
 
 
+def _read_model_name(path: str) -> str | None:
+    """Read model_name from model.meta.json if it exists."""
+    model_dir = os.path.dirname(path)
+    meta_path = os.path.join(model_dir, 'model.meta.json')
+    if os.path.isfile(meta_path):
+        with open(meta_path) as f:
+            meta = json.load(f)
+            return meta.get('model_name')
+    return None
+
+
 def scan_models(sessions_dir: str = 'sessions') -> list[
         tuple[str, list[int], int, str]]:
     """Walk sessions/ for model.pth files.
@@ -64,7 +75,9 @@ def scan_models(sessions_dir: str = 'sessions') -> list[
     New format: {experiment}/{model_name}/model.pth  (+ model.meta.json)
     Old format: {experiment}/*_best.pth  (fallback)
 
-    Returns list of (path, sizes, n_params, folder), sorted by n_params desc.
+    Returns list of (path, sizes, n_params, label), sorted by n_params desc.
+    label = "experiment/model_name" from meta.json when available,
+    otherwise just the top-level experiment name.
     """
     models: list[tuple[str, list[int], int, str]] = []
 
@@ -78,12 +91,16 @@ def scan_models(sessions_dir: str = 'sessions') -> list[
         if pth_file is not None:
             rel = os.path.relpath(root, sessions_dir)
             parts = rel.split(os.sep)
-            folder = parts[0] if len(parts) > 1 else rel  # top-level experiment
+            top_exp = parts[0] if len(parts) > 1 else rel
             full = os.path.join(root, pth_file)
             sizes = parse_key(full)
             if len(sizes) >= 3:
                 n_params = count_params(sizes)
-                models.append((full, sizes, n_params, folder))
+                model_name = _read_model_name(full)
+                # Use model_name if available, else just top-level folder name
+                label = (f"{top_exp}/{model_name}" if model_name
+                         else top_exp)
+                models.append((full, sizes, n_params, label))
             # Don't recurse deeper — model dirs are leaves
             dirs.clear()
             continue
@@ -100,8 +117,10 @@ def scan_models(sessions_dir: str = 'sessions') -> list[
             if len(sizes) < 3:
                 continue
             n_params = count_params(sizes)
-            folder = os.path.relpath(root, sessions_dir)
-            models.append((full, sizes, n_params, folder))
+            model_name = _read_model_name(full)
+            top_exp = os.path.relpath(root, sessions_dir)
+            label = (f"{top_exp}/{model_name}" if model_name else top_exp)
+            models.append((full, sizes, n_params, label))
 
     return sorted(models, key=lambda m: -m[2])
 
