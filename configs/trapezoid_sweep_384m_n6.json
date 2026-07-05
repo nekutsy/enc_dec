@@ -35,7 +35,7 @@
   "sweep": {
     "strategy": "grid",
     "vary": "trapezoid_alpha",
-    "values": [0.10, 0.15, 0.20],
+    "values": [0.05, 0.10],
     "solve": "b",
     "budget": 384000000,
     "fixed": { "n": 6 }
