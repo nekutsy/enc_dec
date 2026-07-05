@@ -33,6 +33,9 @@ class ModelConfig:
     norm_bottleneck: bool = False      # norm on bottleneck layer
     norm_last: bool = False            # norm on final decoder layer
 
+    def to_dict(self) -> dict:
+        return asdict(self)
+
 
 # ── Training configuration ───────────────────────────────────
 
@@ -87,6 +90,9 @@ class TrainConfig:
     checkpoint_interval: int = 100_000   # samples between validation/checkpoint passes
     num_workers: int = 2               # DataLoader workers (2 for GPU, 0 for CPU)
 
+    def to_dict(self) -> dict:
+        return asdict(self)
+
 
 # ── Sweep specification ──────────────────────────────────────
 
@@ -100,6 +106,9 @@ class SweepSpec:
     budget: int | None = None          # target parameter count
     fixed: dict = field(default_factory=dict)
 
+    def to_dict(self) -> dict:
+        return asdict(self)
+
 
 # ── Output configuration ─────────────────────────────────────
 
@@ -109,6 +118,9 @@ class OutputConfig:
     workspace: str = 'sessions/sweep'
     sweep_log: str = 'sessions/global.csv'
     device: str = 'auto'               # auto | cuda | cpu
+
+    def to_dict(self) -> dict:
+        return asdict(self)
 
 
 # ── Top-level sweep config ───────────────────────────────────

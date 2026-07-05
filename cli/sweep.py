@@ -102,6 +102,8 @@ def build_parser():
     rp.add_argument('--config', required=True, help='Path to sweep config JSON')
     rp.add_argument('--override', nargs='+', default=[],
                     help='Override config fields: model.seq_len=64')
+    rp.add_argument('--no-val', action='store_true', default=False,
+                    help='Skip writing val loss to CSV')
 
     # grid — shorthand
     gp = sub.add_parser('grid', help='Grid search over parameter values')
@@ -154,7 +156,7 @@ def main():
             cfg.apply_override(path, value)
             print(f'  override: {path} = {value}')
         sweep = Sweep(cfg)
-        sweep.run()
+        sweep.run(no_val=args.no_val)
         return
 
     if args.command == 'grid':
