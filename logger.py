@@ -90,13 +90,14 @@ class TrainingLogger:
     """
 
     def __init__(self, csv_path: str, config: LoggerConfig | None = None,
-                 ema_decay: float = 0.95, model_name: str = ''):
+                 ema_decay: float = 0.95, model_name: str = '',
+                 log_path: str | None = None):
         self.csv_path = csv_path
         self.config = config or LoggerConfig()
         self.ema_decay = ema_decay
         self.model_name = model_name
         os.makedirs(os.path.dirname(csv_path) or '.', exist_ok=True)
-        self.log_path = csv_path.replace('.csv', '.log')
+        self.log_path = log_path or csv_path.replace('.csv', '.log')
 
         # Internal state
         self._ema_loss: float | None = None
@@ -105,6 +106,14 @@ class TrainingLogger:
         self._train_start_time: float | None = None
         self._prog_last_time: float | None = None
         self._prog_last_samples: int = 0
+
+    def log_header(self, lines: list[str]):
+        """Write header to .log file. Skips if file already exists."""
+        if os.path.isfile(self.log_path):
+            return
+        with open(self.log_path, 'w') as f:
+            for line in lines:
+                f.write(line + '\n')
 
     # ── Batch-level updates ─────────────────────────────────
 
@@ -189,7 +198,10 @@ class TrainingLogger:
                   val_loss: float | None = None, debug: dict | None = None):
         """Write final checkpoint and return summary dict for global CSV."""
         row = self.on_checkpoint(total_samples, train_loss, epoch_size, val_loss)
-        print(self.format_line(row, debug=debug), flush=True)
+        line = self.format_line(row, debug=debug)
+        print(line, flush=True)
+        with open(self.log_path, 'a') as f:
+            f.write(line + '\n')
         return row
 
     # ── Formatting ───────────────────────────────────────────
@@ -218,13 +230,17 @@ class TrainingLogger:
         if 'lr' in row and cfg.lr and self._is_present(row, 'lr'):
             v = row['lr']
             parts.append(f'lr={v:.2e}' if isinstance(v, float) else f'lr={v}')
+        if 'speed_sps' in row and cfg.speed_sps and row.get('speed_sps', 0) == 0:
+            parts = [p for p in parts if not p.startswith('speed=')]
         if debug:
             D_v = debug.get('D')
             Dp_v = debug.get('Dprime')
             mult_v = debug.get('mult')
             delta_v = debug.get('lr_delta')
-            parts.append(f'D={D_v:.2e}' if D_v is not None else 'D=--')
-            parts.append(f"D'={Dp_v:.2e}" if Dp_v is not None else "D'=--")
+            if D_v is not None:
+                parts.append(f'D={D_v:.2e}')
+            if Dp_v is not None:
+                parts.append(f"D'={Dp_v:.2e}")
             if mult_v is not None:
                 parts.append(f'm={mult_v:.4f}')
             elif delta_v is not None:

@@ -144,7 +144,6 @@ class Run:
         model_path = str(self.ws.model_path(self.run_id))
         best_path = str(self.ws.best_path(self.run_id))
         csv_path = str(self.ws.log_csv_path(self.run_id))
-        log_txt_path = str(self.ws.log_txt_path(self.run_id))
         model_dir = str(self.ws.run_dir(self.run_id))
 
         arch_str = '→'.join(str(s) for s in sizes)
@@ -218,7 +217,17 @@ class Run:
 
         # ── Logger ──
         lc = log_config or LoggerConfig.full()
-        train_logger = TrainingLogger(csv_path, config=lc, model_name=self.run_id)
+        train_logger = TrainingLogger(csv_path, config=lc, model_name=self.run_id,
+                                       log_path=str(self.ws.log_txt_path(self.run_id)))
+
+        header_lines = [
+            f'run: {self.run_id}',
+            f'arch: {arch_str}',
+            f'params: {n_params:,}  batch: {bs}',
+        ]
+        if self.tc.noise_prob > 0.0:
+            header_lines.append(f'noise: prob={self.tc.noise_prob}, std={self.tc.noise_std}')
+        train_logger.log_header(header_lines)
 
         rem = max(0, target_samples - start_samples)
         if rem <= 0:
