@@ -1,0 +1,4 @@
+2026-07-04 16:58:48 | trapezoid_sweep/sweep_trapezoid_alpha0.05 | loss=0.060542810678561314 | params=384095324 | samples=4000000 | done | 2788.3s
+2026-07-04 17:48:16 | trapezoid_sweep/sweep_trapezoid_alpha0.1 | loss=0.06032920674361447 | params=383958494 | samples=4000000 | done | 2934.4s
+2026-07-04 18:36:41 | trapezoid_sweep/sweep_trapezoid_alpha0.15 | loss=0.05785918086172735 | params=384025902 | samples=4000000 | done | 2869.2s
+2026-07-04 19:24:53 | trapezoid_sweep/sweep_trapezoid_alpha0.2 | loss=0.059753201783020446 | params=384093608 | samples=4000000 | done | 2857.6s

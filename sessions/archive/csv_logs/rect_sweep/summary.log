@@ -1,0 +1,4 @@
+2026-07-04 13:19:31 | rect_sweep/sweep_n2 | loss=0.08055651386050468 | params=384025686 | samples=4000000 | done | 2731.1s
+2026-07-04 14:05:31 | rect_sweep/sweep_n3 | loss=0.05457862799471997 | params=384031484 | samples=4000000 | done | 2725.8s
+2026-07-04 14:53:32 | rect_sweep/sweep_n4 | loss=0.059680162582229426 | params=383958398 | samples=4000000 | done | 2848.5s
+2026-07-04 15:40:32 | rect_sweep/sweep_n5 | loss=0.06282393543168585 | params=384056824 | samples=4000000 | done | 2786.6s

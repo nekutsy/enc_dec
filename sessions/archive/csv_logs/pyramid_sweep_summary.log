@@ -1,0 +1,3 @@
+2026-07-04 10:52:06 | pyramid_sweep/sweep_n3 | loss=0.05822834995713957 | params=384031484 | samples=4000000 | done | 2837.3s
+2026-07-04 11:39:51 | pyramid_sweep/sweep_n4 | loss=0.06284600455670598 | params=384013898 | samples=4000000 | done | 2833.1s
+2026-07-04 12:26:54 | pyramid_sweep/sweep_n5 | loss=0.06978462886144506 | params=384065628 | samples=4000000 | done | 2791.8s

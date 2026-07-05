@@ -1,11 +1,11 @@
 """Architecture math — layer size builders + budget-constrained solvers.
 
 Pure domain logic. No PyTorch (except count_params which uses simple arithmetic).
-Depends on: encoding (for UNICODE_BITS), sweep_config (for SweepConfig).
+Depends on: encoding (for UNICODE_BITS), experiment.config (for SweepConfig).
 """
 
 from configs import UNICODE_BITS
-from sweep_config import SweepConfig
+from experiment.config import SweepConfig
 
 
 def count_params(layer_sizes: list[int]) -> int:

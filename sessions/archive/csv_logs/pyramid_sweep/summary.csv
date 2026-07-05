@@ -1,0 +1,4 @@
+experiment,model_name,sweep_type,vary_param,vary_value,seq_len,n_hidden,b,hidden_dim,bottleneck,params,batch_size,total_samples,total_symbols,final_train_loss,final_val_loss,final_epoch,train_loss_ema,speed_avg_sps,status,duration_seconds
+pyramid_sweep,sweep_n3,grid,n,,128,3,5.05394,13585.0,160,384031484,256,4000000,512000000,0.05822834995713957,,0.0799,0.057891914943830954,1409.8,done,2837.3
+pyramid_sweep,sweep_n4,grid,n,,128,4,4.32242,11618.666667,160,384013898,256,4000000,512000000,0.06284600455670598,,0.0799,0.06250475336795772,1411.9,done,2833.1
+pyramid_sweep,sweep_n5,grid,n,,128,5,3.85045,10350.0,160,384065628,256,4000000,512000000,0.06978462886144506,,0.0799,0.06932048133806344,1432.8,done,2791.8

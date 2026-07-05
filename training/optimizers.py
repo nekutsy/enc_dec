@@ -6,7 +6,7 @@ Domain layer. Depends on config (TrainConfig), not on training loop.
 import torch
 import torch.optim as optim
 
-from sweep_config import TrainConfig
+from experiment.config import TrainConfig
 
 
 # ── Lion ─────────────────────────────────────────────────────

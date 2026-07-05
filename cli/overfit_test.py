@@ -10,7 +10,7 @@ from data import load_text, _build_full_bits, SlidingWindowDataset
 from model import Autoencoder
 from training.optimizers import build_optimizer
 from training.step import step_batch
-from sweep_config import ModelConfig, TrainConfig
+from experiment.config import ModelConfig, TrainConfig
 from utils import cuda_safe_cleanup
 
 

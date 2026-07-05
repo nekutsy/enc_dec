@@ -1,0 +1,2 @@
+2026-07-03 22:43:01 | sweep_n1 | epoch=  0.00 | samples=    100,096 | speed=     0 sps | loss=0.177491 | lr=2.80e-05
+2026-07-03 22:43:54 | sweep_n1 | epoch=  0.00 | samples=    200,192 | speed= 1,901 sps | loss=0.140933 | lr=4.60e-05

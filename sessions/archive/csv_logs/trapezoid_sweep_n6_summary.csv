@@ -1,0 +1,4 @@
+experiment,model_name,sweep_type,vary_param,vary_value,seq_len,n_hidden,b,hidden_dim,bottleneck,params,batch_size,total_samples,total_symbols,final_train_loss,final_val_loss,final_epoch,train_loss_ema,speed_avg_sps,status,duration_seconds
+trapezoid_sweep_n6,sweep_trapezoid_alpha0.1,grid,trapezoid_alpha,,128,6,2.18917,5884,160,383892144,256,4000000,512000000,0.06642002150654158,,0.0799,0.06618446811886748,1370.6,done,2918.3
+trapezoid_sweep_n6,sweep_trapezoid_alpha0.05,grid,trapezoid_alpha,,128,6,2.19587,5903,160,384033820,256,4000000,512000000,0.06641607854436053,,0.0799,0.06618950859109851,1458.1,done,2743.3
+trapezoid_sweep_n6,sweep_trapezoid_alpha0.1,grid,trapezoid_alpha,,128,6,2.18917,5884,160,383892144,256,4000000,512000000,0.06680934899981986,,0.0799,0.06640283849314747,1513.4,done,2643.1

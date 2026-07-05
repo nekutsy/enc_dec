@@ -1,0 +1,6 @@
+2026-07-03 14:35:44 | bottleneck_sweep/sweep_bottleneck64 | loss=0.1546430173230932 | params=383889006 | samples=4000000 | done | 2870.9s
+2026-07-03 15:23:30 | bottleneck_sweep/sweep_bottleneck96 | loss=0.10103121538587073 | params=383896080 | samples=4000000 | done | 2836.8s
+2026-07-03 16:11:11 | bottleneck_sweep/sweep_bottleneck128 | loss=0.0771592430017413 | params=384027008 | samples=4000000 | done | 2831.5s
+2026-07-03 17:00:57 | bottleneck_sweep/sweep_bottleneck160 | loss=0.06448766667435461 | params=384033678 | samples=4000000 | done | 2955.4s
+2026-07-03 17:48:51 | bottleneck_sweep/sweep_bottleneck192 | loss=0.05748495094953699 | params=384040144 | samples=4000000 | done | 2844.5s
+2026-07-03 18:39:34 | bottleneck_sweep/sweep_bottleneck224 | loss=0.052094436825272886 | params=384046406 | samples=4000000 | done | 3011.3s

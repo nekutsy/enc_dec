@@ -1,29 +1,24 @@
 """Unified sweep runner — grid and binary search.
 
-Three interfaces:
-  1. Config file:  python sweep.py run --config configs/ratio_40m.json
-  2. Shorthand:    python sweep.py grid --vary n=2,4,6,8,10 --solve b --budget 40M
-  3. Override:     python sweep.py run --config ... --override model.seq_len=64
+Uses registry + orchestration. Deduplicates runs across experiments.
+
+Usage:
+  python cli/sweep.py run --config configs/noise_sweep.json
+  python cli/sweep.py grid --vary n=2,4,6,8,10 --solve b --budget 40M
+  python cli/sweep.py binary --vary n --range 2 16 --solve b --budget 40M
 """
 
 import argparse
 import os
 import sys
 
-import torch
-
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from configs import UNICODE_BITS
-from utils import cuda_safe_cleanup
-from sweep_lib import (
-    resolve_architecture, train_one, setup_runtime,
-    gpu_health_check,
-)
-from logger import GlobalLogger, LoggerConfig
-from sweep_config import (
+from experiment.config import (
     SweepConfig, ModelConfig, TrainConfig, SweepSpec, OutputConfig,
 )
+from orchestration import Sweep
+from utils import cuda_safe_cleanup
 
 
 # ── Helpers ──────────────────────────────────────────────────
@@ -63,324 +58,7 @@ def _parse_overrides(override_args):
     return result
 
 
-# ── Sweep runner ─────────────────────────────────────────────
-
-class SweepRunner:
-    """Generic sweep runner: grid or binary strategy, driven by SweepConfig."""
-
-    def __init__(self, sweep_config: SweepConfig,
-                 runtime=None, global_logger=None):
-        self.cfg = sweep_config
-        self.results = {}
-        self._runtime = runtime
-        self._global_logger = global_logger
-
-    def run(self):
-        cfg = self.cfg
-
-        # ── Runtime ──
-        if self._global_logger is None:
-            self._global_logger = GlobalLogger(cfg.output.sweep_log)
-            self._global_logger.init()
-        if self._runtime is None:
-            self._runtime = setup_runtime(cfg.output, self._global_logger)
-        self.global_logger = self._global_logger
-
-        if not gpu_health_check():
-            print('⚠ GPU not available — check nvidia-smi')
-            return None
-
-        existing = self._global_logger.get_completed(
-            cfg.training.target_samples, cfg.model.seq_len)
-
-        print(f'Sweep: {cfg.name}  ({cfg.sweep.strategy} over {cfg.sweep.vary})')
-        print(f'  seq_len={cfg.model.seq_len}  target={cfg.training.target_samples//1e6:.0f}M samples  '
-              f'budget={cfg.sweep.budget//1e6 if cfg.sweep.budget else "auto"}M')
-        print(f'  workspace: {cfg.output.workspace}  |  log: {cfg.output.sweep_log}')
-        print()
-
-        if cfg.sweep.strategy == 'grid':
-            self._run_grid(existing)
-        elif cfg.sweep.strategy == 'binary':
-            self._run_binary(existing)
-
-        self._print_summary()
-        return self.results
-
-    def _train_and_log(self, vary_value):
-        """Resolve, train, log, store result. Returns (val, status)."""
-        cfg = self.cfg
-        vary_name = cfg.sweep.vary
-
-        arch = resolve_architecture(vary_value, vary_name, cfg)
-        n_params = arch['n_params']
-
-        max_params_m = 500_000_000
-        if n_params > max_params_m:
-            print(f'  ⚠ {n_params:,} > {max_params_m//1_000_000}M — skipping')
-            return None, 'skip'
-
-        prefix = f'sweep_{vary_name}{vary_value}'
-        if vary_name in ('normalization', 'activation', 'dropout', 'batch_size',
-                         'norm_bottleneck', 'norm_last', 'init_gain'):
-            prefix = f'{vary_name}_{vary_value}_sweep'
-        val, status, actual_samples = train_one(arch, cfg, prefix, self._runtime, no_val=True)
-        cuda_safe_cleanup()
-
-        if val is not None:
-            self.results[vary_value] = val
-        return val, status
-
-    def _run_grid(self, existing):
-        cfg = self.cfg
-        vary_values = cfg.sweep.values
-        vary_name = cfg.sweep.vary
-
-        print(f'{"vary":>8}  {"n":>3}  {"b":>7}  {"params":>10}')
-        for v in vary_values:
-            try:
-                arch = resolve_architecture(v, vary_name, cfg)
-                tag = ' ✓' if v in existing else ''
-                print(f'{v:>8}  {arch["n"]:>3}  {arch["b"]:>7.4g}  {arch["n_params"]:>10,}{tag}')
-            except Exception as e:
-                print(f'{v:>8}  ERROR: {e}')
-        print()
-
-        for v in vary_values:
-            if v in existing:
-                print(f'[{vary_name}={v}] — already done ({existing[v]:.6f})')
-                self.results[v] = existing[v]
-                continue
-
-            print(f'{"─"*50}')
-            print(f'[{vary_name}={v}]')
-            self._train_and_log(v)
-            print()
-
-    def _run_binary(self, existing):
-        cfg = self.cfg
-        lo, hi = cfg.sweep.values[0], cfg.sweep.values[1]
-        vary_name = cfg.sweep.vary
-        results = dict(existing)
-        
-        is_float = isinstance(lo, float) or isinstance(hi, float)
-        if is_float:
-            def _decimals(v):
-                s = f"{v:.10f}".rstrip('0')
-                if '.' in s:
-                    return len(s.split('.')[1])
-                return 0
-            step = 10 ** (-max(_decimals(lo), _decimals(hi)))
-            def _to_step(v):
-                return round(v / step) * step
-        else:
-            step = 1
-            def _to_step(v):
-                return int(v)
-
-        for boundary in [lo, hi]:
-            if boundary not in results:
-                print(f'[{vary_name}={boundary}] probing boundary...')
-                val, status = self._train_and_log(boundary)
-                if val is not None:
-                    results[boundary] = val
-                else:
-                    results[boundary] = 1e9
-                print()
-
-        for iteration in range(12):
-            valid = {k: v for k, v in results.items() if v < 1e8}
-            if len(valid) < 2:
-                print('  → not enough valid results')
-                break
-
-            sorted_ns = sorted(valid, key=valid.get)
-            best = sorted_ns[0]
-            second = sorted_ns[1]
-
-            left_neighbor = _to_step(best - step)
-            right_neighbor = _to_step(best + step)
-            has_left = best <= lo or left_neighbor in results
-            has_right = best >= hi or right_neighbor in results
-
-            print(f'  best: {vary_name}={best} ({results[best]:.6f})')
-            print(f'  2nd:  {vary_name}={second} ({results[second]:.6f})')
-
-            if has_left and has_right:
-                print(f'  → converged\n')
-                break
-
-            if abs(_to_step(best - second)) <= step:
-                if not has_left and left_neighbor not in results:
-                    mid = left_neighbor
-                elif not has_right and right_neighbor not in results:
-                    mid = right_neighbor
-                else:
-                    print(f'  → all values tested — converged\n')
-                    break
-            else:
-                mid = _to_step((best + second) / 2)
-                if mid in results:
-                    lo_b, hi_b = min(best, second), max(best, second)
-                    found = False
-                    candidate = lo_b + step
-                    while candidate < hi_b:
-                        c = _to_step(candidate)
-                        if c not in results:
-                            mid = c
-                            found = True
-                            break
-                        candidate += step
-                    if not found:
-                        if not has_left and left_neighbor not in results:
-                            mid = left_neighbor
-                        elif not has_right and right_neighbor not in results:
-                            mid = right_neighbor
-                        else:
-                            print(f'  → all values tested — converged\n')
-                            break
-
-            print(f'  → testing {vary_name}={mid}\n')
-            val, status = self._train_and_log(mid)
-            if val is not None:
-                results[mid] = val
-            else:
-                results[mid] = 1e9
-            print()
-
-        self.results = {k: v for k, v in results.items() if v < 1e8}
-
-    def _print_summary(self):
-        if not self.results:
-            return
-        print(f'{"="*55}')
-        print(f'RESULTS: {self.cfg.name}')
-        print(f'{"vary":>8}  {"train_loss":>10}')
-        print('-' * 25)
-        for v in sorted(self.results):
-            print(f'{v:>8}  {self.results[v]:>10.6f}')
-        best = min(self.results, key=self.results.get)
-        print(f'\n  ★ best: {self.cfg.sweep.vary}={best}  train={self.results[best]:.6f}')
-        print(f'{"="*55}')
-
-
-# ── Embedded binary inside grid ──────────────────────────────
-
-def _run_grid_with_binary(outer_config: SweepConfig, binary_vary, binary_range):
-    """Grid over sweep.vary values; for each, run binary search on binary_vary."""
-    cfg = outer_config
-
-    if not gpu_health_check():
-        print('⚠ GPU not available')
-        return
-
-    global_logger = GlobalLogger(cfg.output.sweep_log)
-    global_logger.init()
-    runtime = setup_runtime(cfg.output, global_logger)
-
-    print(f'Grid over {cfg.sweep.vary} × binary on {binary_vary}')
-    print(f'  {cfg.sweep.vary} values: {cfg.sweep.values}')
-    print(f'  {binary_vary} range: {binary_range}')
-    print()
-
-    all_best = {}
-    for outer_val in cfg.sweep.values:
-        inner_fixed = dict(cfg.sweep.fixed)
-        inner_fixed[cfg.sweep.vary] = outer_val
-
-        inner_sweep = SweepSpec(
-            strategy='binary',
-            vary=binary_vary,
-            values=list(binary_range),
-            solve=cfg.sweep.solve,
-            budget=cfg.sweep.budget,
-            fixed=inner_fixed,
-        )
-
-        binary_cfg = SweepConfig(
-            name=f'{cfg.name}_{cfg.sweep.vary}{outer_val}',
-            model=cfg.model,
-            training=cfg.training,
-            sweep=inner_sweep,
-            output=cfg.output,
-        )
-
-        print(f'\n{"="*60}')
-        print(f'[{cfg.sweep.vary}={outer_val}] binary search on {binary_vary}')
-        print(f'{"="*60}')
-
-        runner = SweepRunner(binary_cfg, runtime=runtime, global_logger=global_logger)
-        results = runner.run()
-        if results:
-            best = min(results, key=results.get)
-            all_best[outer_val] = best
-            print(f'  ★ [{cfg.sweep.vary}={outer_val}] best {binary_vary}={best}  train={results[best]:.6f}')
-
-    if all_best:
-        print(f'\n{"="*60}')
-        print('GRID × BINARY SUMMARY')
-        for ov in sorted(all_best):
-            print(f'  {cfg.sweep.vary}={ov:>4d}  →  {binary_vary}={all_best[ov]}')
-        print(f'{"="*60}')
-
-
-# ── CLI ──────────────────────────────────────────────────────
-
-def build_parser():
-    parser = argparse.ArgumentParser(description='Unified sweep runner')
-    sub = parser.add_subparsers(dest='command', required=True)
-
-    # run — from config file
-    rp = sub.add_parser('run', help='Run sweep from config file')
-    rp.add_argument('--config', required=True, help='Path to sweep config JSON')
-    rp.add_argument('--override', nargs='+', default=[],
-                    help='Override config fields: model.seq_len=64 sweep.solve=n')
-
-    # grid — shorthand
-    gp = sub.add_parser('grid', help='Grid search over parameter values')
-    gp.add_argument('--vary', required=True, help='e.g. n=2,3,4,5 or batch_size=64,128,256')
-    gp.add_argument('--solve', default=None, choices=['b', 'n'])
-    gp.add_argument('--fixed', nargs='+', default=[])
-    gp.add_argument('--budget', type=str, default=None, help='Target params, e.g. 40M')
-    gp.add_argument('--seq-len', type=int, default=32)
-    gp.add_argument('--bottleneck', type=int, default=None)
-    gp.add_argument('--lr', type=float, default=0.001)
-    gp.add_argument('--scheduler', default='onecycle')
-    gp.add_argument('--optimizer', default='adamw_fused')
-    gp.add_argument('--target-samples', type=str, default='5M')
-    gp.add_argument('--workspace', default='sessions/sweep')
-    gp.add_argument('--sweep-log', default='sessions/global.csv')
-    gp.add_argument('--device', default='auto')
-    gp.add_argument('--batch-size', type=int, default=None)
-    gp.add_argument('--early-stop', type=int, default=None)
-    gp.add_argument('--no-val', action='store_true')
-    gp.add_argument('--binary-on', default=None,
-                    help='Parameter to binary-search for each grid value')
-    gp.add_argument('--range', type=int, nargs=2, default=None)
-
-    # binary — shorthand
-    bp = sub.add_parser('binary', help='Binary search over a parameter')
-    bp.add_argument('--vary', required=True, help='Parameter to search, e.g. n')
-    bp.add_argument('--range', type=int, nargs=2, required=True)
-    bp.add_argument('--solve', default=None, choices=['b', 'n'])
-    bp.add_argument('--fixed', nargs='+', default=[])
-    bp.add_argument('--budget', type=str, default=None)
-    bp.add_argument('--seq-len', type=int, default=32)
-    bp.add_argument('--bottleneck', type=int, default=None)
-    bp.add_argument('--lr', type=float, default=0.001)
-    bp.add_argument('--scheduler', default='onecycle')
-    bp.add_argument('--optimizer', default='adamw_fused')
-    bp.add_argument('--target-samples', type=str, default='5M')
-    bp.add_argument('--workspace', default='sessions/sweep')
-    bp.add_argument('--sweep-log', default='sessions/global.csv')
-    bp.add_argument('--device', default='auto')
-    bp.add_argument('--batch-size', type=int, default=None)
-
-    return parser
-
-
 def _cli_shorthand_to_config(args, vary_values) -> SweepConfig:
-    """Convert CLI shorthand args to SweepConfig."""
     budget = _parse_size(args.budget) if args.budget else None
     target_samples = _parse_size(args.target_samples)
     batch_size = getattr(args, 'batch_size', None) or 256
@@ -415,6 +93,57 @@ def _cli_shorthand_to_config(args, vary_values) -> SweepConfig:
     )
 
 
+def build_parser():
+    parser = argparse.ArgumentParser(description='Unified sweep runner')
+    sub = parser.add_subparsers(dest='command', required=True)
+
+    # run — from config file
+    rp = sub.add_parser('run', help='Run sweep from config file')
+    rp.add_argument('--config', required=True, help='Path to sweep config JSON')
+    rp.add_argument('--override', nargs='+', default=[],
+                    help='Override config fields: model.seq_len=64')
+
+    # grid — shorthand
+    gp = sub.add_parser('grid', help='Grid search over parameter values')
+    gp.add_argument('--vary', required=True, help='e.g. n=2,3,4,5')
+    gp.add_argument('--solve', default=None, choices=['b', 'n'])
+    gp.add_argument('--fixed', nargs='+', default=[])
+    gp.add_argument('--budget', type=str, default=None)
+    gp.add_argument('--seq-len', type=int, default=32)
+    gp.add_argument('--bottleneck', type=int, default=None)
+    gp.add_argument('--lr', type=float, default=0.001)
+    gp.add_argument('--scheduler', default='onecycle')
+    gp.add_argument('--optimizer', default='adamw_fused')
+    gp.add_argument('--target-samples', type=str, default='5M')
+    gp.add_argument('--workspace', default='sessions/sweep')
+    gp.add_argument('--sweep-log', default='sessions/global.csv')
+    gp.add_argument('--device', default='auto')
+    gp.add_argument('--batch-size', type=int, default=None)
+    gp.add_argument('--early-stop', type=int, default=None)
+    gp.add_argument('--no-val', action='store_true')
+    gp.add_argument('--shape', default='rectangular',
+                    choices=['rectangular', 'pyramid', 'interleaved', 'trapezoid'])
+
+    # binary — shorthand
+    bp = sub.add_parser('binary', help='Binary search over a parameter')
+    bp.add_argument('--vary', required=True)
+    bp.add_argument('--range', type=float, nargs=2, required=True)
+    bp.add_argument('--solve', default=None, choices=['b', 'n'])
+    bp.add_argument('--fixed', nargs='+', default=[])
+    bp.add_argument('--budget', type=str, default=None)
+    bp.add_argument('--seq-len', type=int, default=32)
+    bp.add_argument('--bottleneck', type=int, default=None)
+    bp.add_argument('--lr', type=float, default=0.001)
+    bp.add_argument('--scheduler', default='onecycle')
+    bp.add_argument('--optimizer', default='adamw_fused')
+    bp.add_argument('--target-samples', type=str, default='5M')
+    bp.add_argument('--workspace', default='sessions/sweep')
+    bp.add_argument('--device', default='auto')
+    bp.add_argument('--batch-size', type=int, default=None)
+
+    return parser
+
+
 def main():
     parser = build_parser()
     args = parser.parse_args()
@@ -424,8 +153,8 @@ def main():
         for path, value in _parse_overrides(args.override):
             cfg.apply_override(path, value)
             print(f'  override: {path} = {value}')
-        runner = SweepRunner(cfg)
-        runner.run()
+        sweep = Sweep(cfg)
+        sweep.run()
         return
 
     if args.command == 'grid':
@@ -441,11 +170,12 @@ def main():
 
     cfg = _cli_shorthand_to_config(args, vary_values)
 
-    if args.command == 'grid' and args.binary_on:
-        _run_grid_with_binary(cfg, args.binary_on, args.range)
-    else:
-        runner = SweepRunner(cfg)
-        runner.run()
+    # Apply shape if specified
+    if hasattr(args, 'shape') and args.shape:
+        cfg.model.shape = args.shape
+
+    sweep = Sweep(cfg)
+    sweep.run()
 
 
 if __name__ == '__main__':

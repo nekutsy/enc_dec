@@ -118,7 +118,7 @@ class SweepConfig:
     """Complete sweep configuration — one file per experiment.
 
     All fields are serialisable. Runtime state (device, text, global_logger)
-    lives in sweep_lib.RuntimeContext.
+    lives in experiment.context.RuntimeContext.
     """
     name: str = 'sweep'
     model: ModelConfig = field(default_factory=ModelConfig)

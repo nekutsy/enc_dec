@@ -1,0 +1,3 @@
+2026-07-04 20:16:25 | trapezoid_sweep_n6/sweep_trapezoid_alpha0.1 | loss=0.06642002150654158 | params=383892144 | samples=4000000 | done | 2918.3s
+2026-07-05 09:17:45 | trapezoid_sweep_n6/sweep_trapezoid_alpha0.05 | loss=0.06641607854436053 | params=384033820 | samples=4000000 | done | 2743.3s
+2026-07-05 10:02:19 | trapezoid_sweep_n6/sweep_trapezoid_alpha0.1 | loss=0.06680934899981986 | params=383892144 | samples=4000000 | done | 2643.1s

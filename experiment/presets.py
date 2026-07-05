@@ -1,6 +1,6 @@
 """Preset sweep config generators — ready-to-use experiments."""
 
-from sweep_config import SweepConfig, ModelConfig, TrainConfig, SweepSpec, OutputConfig
+from experiment.config import SweepConfig, ModelConfig, TrainConfig, SweepSpec, OutputConfig
 
 
 def preset_ratio(budget_m: int) -> SweepConfig:

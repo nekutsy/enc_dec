@@ -1,0 +1,7 @@
+2026-07-04 09:42:27 | sweep_n6 | epoch=  0.00 | samples=    100,096 | speed=     0 sps | loss=0.289017 | lr=2.80e-05
+2026-07-04 09:43:42 | sweep_n6 | epoch=  0.00 | samples=    200,192 | speed= 1,336 sps | loss=0.226314 | lr=4.60e-05
+2026-07-04 09:44:50 | sweep_n6 | epoch=  0.01 | samples=    300,288 | speed= 1,463 sps | loss=0.230916 | lr=6.40e-05
+2026-07-04 09:45:59 | sweep_n6 | epoch=  0.01 | samples=    400,384 | speed= 1,458 sps | loss=0.229009 | lr=8.21e-05
+2026-07-04 09:47:08 | sweep_n6 | epoch=  0.01 | samples=    500,480 | speed= 1,435 sps | loss=0.227219 | lr=1.01e-04
+2026-07-04 09:48:18 | sweep_n6 | epoch=  0.01 | samples=    600,576 | speed= 1,446 sps | loss=0.227237 | lr=1.36e-04
+2026-07-04 09:49:33 | sweep_n6 | epoch=  0.01 | samples=    700,672 | speed= 1,331 sps | loss=0.224573 | lr=1.52e-04

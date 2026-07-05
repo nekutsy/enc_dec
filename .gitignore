@@ -1,12 +1,8 @@
-/sessions/*
-/data/output/*
-/data/cache/*
-/data/models/*
-___pycache___
+sessions/runs/
+sessions/experiments/
+data/cache/
 __pycache__
-*.pt
+*.pyc
 *.pth
 *.opt
-*.csv
-*.log
-archive
+*.sch

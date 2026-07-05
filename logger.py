@@ -1,10 +1,11 @@
-"""Structured training logger with configurable fields, EMA smoothing, dual-file output.
+"""Structured training logger with configurable fields, EMA smoothing.
 
 Core components:
   LoggerConfig   — toggle individual metric fields
-  TrainingLogger — per-model CSV + stdout + progress bar + global summary
-  GlobalLogger   — sweep-level summary CSV
-  get_last_samples / get_last_symbols — backward-compatible CSV readers
+  TrainingLogger — per-model CSV + stdout + progress bar
+  get_last_samples — read last checkpoint from CSV
+
+Note: GlobalLogger removed; use registry.db for experiment tracking.
 """
 
 import csv
@@ -273,131 +274,6 @@ class TrainingLogger:
             return 0.0
         return time_mod.time() - self._train_start_time
 
-
-# ── GlobalLogger — sweep-level summary ────────────────────────
-
-GLOBAL_COLUMNS = [
-    'experiment', 'model_name',
-    'sweep_type', 'vary_param', 'vary_value',
-    'seq_len', 'n_hidden', 'b', 'hidden_dim', 'bottleneck',
-    'params', 'batch_size', 'total_samples', 'total_symbols',
-    'final_train_loss', 'final_val_loss', 'final_epoch',
-    'train_loss_ema', 'speed_avg_sps',
-    'status', 'duration_seconds',
-]
-
-
-class GlobalLogger:
-    """Sweep/experiment-level summary CSV — one file collecting final results.
-
-    Usage:
-        glog = GlobalLogger('sessions/sweep_summary.csv')
-        glog.init()
-        # After training:
-        glog.log_result({'sweep_type': 'grid', 'vary_param': 'n', ...})
-        # Check what's done:
-        done = glog.get_completed(target_samples=50000000, seq_len=128)
-    """
-
-    def __init__(self, csv_path: str, columns: list[str] | None = None):
-        self.csv_path = csv_path
-        self.columns = columns or GLOBAL_COLUMNS
-        os.makedirs(os.path.dirname(csv_path) or '.', exist_ok=True)
-        self.log_path = csv_path.replace('.csv', '.log')
-
-    def init(self):
-        """Create CSV with header if it doesn't exist."""
-        if not os.path.isfile(self.csv_path):
-            with open(self.csv_path, 'w', newline='') as f:
-                csv.writer(f).writerow(self.columns)
-
-    def log_result(self, row_dict: dict):
-        """Append a result row to the global CSV + human-readable .log."""
-        with open(self.csv_path, 'a', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=self.columns)
-            writer.writerow(row_dict)
-        line = self._format_human(row_dict)
-        with open(self.log_path, 'a') as f:
-            f.write(line + '\n')
-
-    @staticmethod
-    def _format_human(row: dict) -> str:
-        """Format a result row as a human-readable line."""
-        ts = time_mod.strftime('%Y-%m-%d %H:%M:%S')
-        exp = row.get('experiment', '')
-        model = row.get('model_name', '')
-        label = f'{exp}/{model}' if model else exp
-        loss = row.get('final_train_loss', '')
-        params = row.get('params', '')
-        samples = row.get('total_samples', '')
-        status = row.get('status', '')
-        dur = row.get('duration_seconds', '')
-        parts = [ts, label, f'loss={loss}', f'params={params}',
-                 f'samples={samples}', status]
-        if dur:
-            parts.append(f'{dur}s')
-        return ' | '.join(str(p) for p in parts)
-
-    def get_completed(self, target_samples: int, seq_len: int | None = None
-                      ) -> dict:
-        """Return {vary_value: final_val_loss} for completed runs.
-
-        Uses total_samples column for accuracy; falls back to
-        total_symbols/seq_len for legacy CSVs.
-        """
-        done = {}
-        if not os.path.isfile(self.csv_path):
-            return done
-        with open(self.csv_path) as f:
-            reader = csv.DictReader(f)
-            fieldnames = reader.fieldnames or []
-            has_samples = 'total_samples' in fieldnames
-            for row in reader:
-                try:
-                    status = row.get('status', '')
-                    val_str = (row.get('final_val_loss', '') or
-                               row.get('final_train_loss', ''))
-                    vary_str = row.get('vary_value', '')
-
-                    if has_samples:
-                        sam = int(float(row.get('total_samples', 0)))
-                    else:
-                        sym = int(float(row.get('total_symbols', 0)))
-                        sl = seq_len or int(float(row.get('seq_len', 32)))
-                        sam = sym // sl if sl > 0 else 0
-
-                    if (status == 'done' and sam >= target_samples * 0.85
-                            and val_str and vary_str):
-                        try:
-                            vary_val = float(vary_str)
-                            vary_val = (int(vary_val) if vary_val == int(vary_val)
-                                       else vary_val)
-                        except ValueError:
-                            vary_val = vary_str
-                        done[vary_val] = float(val_str)
-                except (ValueError, TypeError):
-                    continue
-        return done
-
-
-# ── Backward-compatible wrappers (used by old sweep scripts) ─
-
-UNIFIED_COLUMNS = GLOBAL_COLUMNS  # alias for old code
-
-
-def init_log(sweep_log, columns=None):
-    """Legacy wrapper — use GlobalLogger instead."""
-    GlobalLogger(sweep_log, columns=columns).init()
-
-
-def gather_done(sweep_log, target_samples, seq_len=None):
-    """Legacy wrapper — use GlobalLogger.get_completed() instead."""
-    return GlobalLogger(sweep_log).get_completed(target_samples, seq_len)
-
-
-def log_row(sweep_log, row_dict):
-    """Legacy wrapper — use GlobalLogger.log_result() instead."""
-    GlobalLogger(sweep_log).log_result(row_dict)
 
 def get_last_samples(csv_path: str) -> int:
     """Read total_samples from the last row of a per-model CSV.

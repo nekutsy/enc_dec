@@ -1,0 +1,2 @@
+experiment,model_name,sweep_type,vary_param,vary_value,seq_len,n_hidden,b,hidden_dim,bottleneck,params,batch_size,total_samples,total_symbols,final_train_loss,final_val_loss,final_epoch,train_loss_ema,speed_avg_sps,status,duration_seconds
+interleaved_sweep_n56,sweep_n5,grid,n,,128,5,5.01172,13472,160,384021652,256,10000128,1280016384,0.15412163342964852,,0.1998,0.15421015753188208,1454.8,done,6873.9

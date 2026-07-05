@@ -1,0 +1,2 @@
+experiment,model_name,sweep_type,vary_param,vary_value,seq_len,n_hidden,b,hidden_dim,bottleneck,params,batch_size,total_samples,total_symbols,final_train_loss,final_val_loss,final_epoch,train_loss_ema,speed_avg_sps,status,duration_seconds
+greedy_grad_160m,n4_b1p75,grid,n,4,128,4,1.75353,4713,128,159939390,256,100000232,12800029696,0.2392949146382949,,1.9979,0.23929229860282603,3368.3,done,29688.5
