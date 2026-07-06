@@ -253,12 +253,14 @@ class Run:
 
             dur = time_mod.time() - t_start
             final_train_loss = self._read_final_loss(csv_path, train_logger)
+            final_val_loss = self._read_final_val_loss(csv_path, train_logger)
             speed_avg = final_samples / dur if dur > 0 else 0.0
             print(f'  done: {final_samples:,} samples in {dur:.0f}s '
                   f'({speed_avg:,.0f} sps)  train={final_train_loss:.6f}')
 
             result = RunResult(
                 final_train_loss=final_train_loss,
+                final_val_loss=final_val_loss,
                 total_samples=final_samples,
                 duration_seconds=round(dur, 1),
                 status='done',
@@ -335,6 +337,28 @@ class Run:
         except Exception:
             pass
         return loss
+
+    def _read_final_val_loss(self, csv_path, train_logger) -> float | None:
+        """Read final val_loss from CSV."""
+        try:
+            with open(csv_path) as f:
+                reader = csv.reader(f)
+                header = next(reader)
+                if 'val_loss' not in header:
+                    return None
+                last_row = None
+                for row in reader:
+                    last_row = row
+                if last_row:
+                    try:
+                        col = header.index('val_loss')
+                        val = last_row[col]
+                        return float(val) if val else None
+                    except (ValueError, IndexError):
+                        return None
+        except Exception:
+            pass
+        return None
 
     def _read_result_from_csv(self, csv_path, total_samples) -> RunResult:
         """Read result from existing CSV for already-done check."""

@@ -190,7 +190,7 @@ def run_training(start_samples: int, max_samples: int, model, optimizer, criteri
                             debug = step_scheduler.get_debug_info()
                         train_logger.log_checkpoint(
                             total_samples, avg_train_loss, epoch_size,
-                            val_loss=None if no_val else avg_val_loss,
+                            val_loss=avg_val_loss,
                             lr=cur_lr, debug=debug)
 
                         # early-stop disabled
@@ -229,7 +229,7 @@ def run_training(start_samples: int, max_samples: int, model, optimizer, criteri
             debug = step_scheduler.get_debug_info()
         train_logger.log_checkpoint(
             total_samples, avg_train_loss, epoch_size,
-            val_loss=None if no_val else avg_val_loss,
+            val_loss=avg_val_loss,
             lr=cur_lr, debug=debug)
 
     save_checkpoint(model, optimizer, model_path,
