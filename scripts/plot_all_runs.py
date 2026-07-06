@@ -1,4 +1,4 @@
-"""Plot train_loss, val_loss, lr for all runs grouped by experiment."""
+"""Plot train_loss, val_loss, lr for current runs (sessions/runs/)."""
 
 import csv
 import os
@@ -11,11 +11,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 SESSIONS_DIR = Path(__file__).resolve().parent.parent / 'sessions'
+RUNS_DIR = SESSIONS_DIR / 'runs'
 OUT_DIR = SESSIONS_DIR / 'plots'
 
 
 def read_csv(csv_path):
-    """Read log.csv → {col: [values]}."""
     data = defaultdict(list)
     with open(csv_path) as f:
         reader = csv.DictReader(f)
@@ -28,93 +28,71 @@ def read_csv(csv_path):
     return data
 
 
-def plot_group(group_name, runs, out_dir):
-    """Plot train_loss, val_loss, lr for a group of runs."""
-    n = len(runs)
-    if n == 0:
-        return
+def plot_run(run_id, csv_path, meta_path, out_dir):
+    data = read_csv(csv_path)
 
-    cols = 3
-    fig, axes = plt.subplots(1, cols, figsize=(6 * cols, 5))
-    fig.suptitle(group_name, fontsize=13, fontweight='bold', y=0.98)
+    # Load meta info
+    label = run_id
+    noise = '?'
+    if meta_path.exists():
+        import json
+        with open(meta_path) as f:
+            meta = json.load(f)
+        tc = meta.get('train_config', {})
+        noise = tc.get('noise_prob', '?')
+        label = f'{run_id[:6]} (noise={noise})'
+
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    fig.suptitle(f'{label}', fontsize=12, fontweight='bold')
 
     metrics = ['train_loss', 'val_loss', 'lr']
-    colors = plt.cm.tab10(np.linspace(0, 1, max(n, 1)))
+    colors = ['#1f77b4', '#d62728', '#2ca02c']
 
-    for ax, metric in zip(axes, metrics):
-        for i, (label, csv_path) in enumerate(runs):
-            data = read_csv(csv_path)
-            x = data.get('total_samples', data.get('epoch', []))
-            y = data.get(metric, [])
+    x = data.get('total_samples', [])
 
-            # Drop NaN values
-            valid = [(xv, yv) for xv, yv in zip(x, y) if not np.isnan(yv)]
-            if not valid:
-                continue
-            x_valid, y_valid = zip(*valid)
-            ax.plot(x_valid, y_valid, color=colors[i % len(colors)],
-                    linewidth=1.0, alpha=0.85, label=label)
-
+    for ax, metric, color in zip(axes, metrics, colors):
+        y = data.get(metric, [])
+        valid = [(xv, yv) for xv, yv in zip(x, y) if not np.isnan(yv)]
+        if not valid:
+            ax.text(0.5, 0.5, 'no data', ha='center', va='center',
+                    transform=ax.transAxes, fontsize=14, color='gray')
+            ax.set_title(metric)
+            continue
+        xv, yv = zip(*valid)
+        ax.plot(xv, yv, color=color, linewidth=1.2)
         ax.set_title(metric)
-        ax.set_xlabel('total_samples' if 'total_samples' in data else 'epoch')
+        ax.set_xlabel('total_samples')
         ax.grid(True, alpha=0.3)
-        if n <= 10:
-            ax.legend(fontsize=7, loc='best')
 
-    plt.tight_layout(rect=[0, 0, 1, 0.95])
-    out_path = out_dir / f'{group_name}.png'
+        # Final value annotation
+        ax.annotate(f'{yv[-1]:.6f}' if metric != 'lr' else f'{yv[-1]:.2e}',
+                    xy=(xv[-1], yv[-1]), xytext=(10, 0),
+                    textcoords='offset points', fontsize=8, color=color,
+                    va='center')
+
+    plt.tight_layout()
+    out_path = out_dir / f'{run_id[:6]}.png'
     os.makedirs(out_dir, exist_ok=True)
     fig.savefig(out_path, dpi=150, bbox_inches='tight')
     plt.close(fig)
-    print(f'  Saved: {out_path}')
-
-
-def collect_runs():
-    """Collect all log.csv files grouped by experiment/parent dir."""
-    groups = defaultdict(list)
-
-    # Scan sessions dir for all log.csv
-    for csv_path in SESSIONS_DIR.rglob('log.csv'):
-        rel = csv_path.relative_to(SESSIONS_DIR)
-
-        # Determine group name from path
-        parts = rel.parts
-
-        if parts[0] == 'runs':
-            # Current runs — group all together as "current"
-            run_id = parts[1]
-            label = run_id[:6]
-            groups['current_runs'].append((label, csv_path))
-        elif parts[0] == 'archive':
-            # e.g. archive/csv_logs/rect_sweep/sweep_n2/log.csv
-            if len(parts) >= 4:
-                group = parts[2]  # rect_sweep, interleaved_sweep, etc.
-                subdir = parts[3]  # sweep_n2, sweep_noise_prob0.1, etc.
-                groups[group].append((subdir, csv_path))
-            elif len(parts) == 3:
-                # e.g. archive/csv_logs/n8_rect_bn160_50M/n8_s128/log.csv
-                group = parts[2]
-                subdir = parts[3] if len(parts) > 3 else 'run'
-                groups[group].append((subdir, csv_path))
-
-    return groups
+    print(f'  {out_path}')
 
 
 def main():
     out_dir = OUT_DIR
-    # Clean old plots
     if out_dir.exists():
         import shutil
         shutil.rmtree(out_dir)
     os.makedirs(out_dir, exist_ok=True)
 
-    groups = collect_runs()
-    print(f'Found {sum(len(v) for v in groups.values())} runs in {len(groups)} groups\n')
+    runs = sorted(os.listdir(RUNS_DIR))
+    print(f'Plotting {len(runs)} runs:\n')
 
-    for group_name in sorted(groups):
-        runs = groups[group_name]
-        print(f'  {group_name} ({len(runs)} runs)')
-        plot_group(group_name, runs, out_dir)
+    for run_id in runs:
+        csv_path = RUNS_DIR / run_id / 'log.csv'
+        meta_path = RUNS_DIR / run_id / 'meta.json'
+        if csv_path.exists():
+            plot_run(run_id, csv_path, meta_path, out_dir)
 
     print(f'\nDone. Plots in: {out_dir}')
 
