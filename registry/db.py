@@ -211,13 +211,16 @@ class Registry:
             ).fetchone()
         return dict(row) if row else None
 
-    def get_completed_run(self, arch_fp: str, train_hash: str) -> dict | None:
-        """Return a completed run if one exists, else None."""
+    def get_completed_run(self, arch_fp: str, train_hash: str,
+                          min_samples: int = 0) -> dict | None:
+        """Return a completed run if one exists with enough samples, else None."""
         with self._connect() as conn:
             row = conn.execute("""
                 SELECT * FROM runs
-                WHERE architecture_fp = ? AND training_hash = ? AND status = 'done'
-            """, (arch_fp, train_hash)).fetchone()
+                WHERE architecture_fp = ? AND training_hash = ?
+                  AND status = 'done'
+                  AND total_samples >= ?
+            """, (arch_fp, train_hash, min_samples)).fetchone()
         return dict(row) if row else None
 
     def list_recent_runs(self, limit: int = 20,

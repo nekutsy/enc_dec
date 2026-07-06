@@ -95,13 +95,13 @@ class Run:
             _json.dumps(mc.to_dict() if hasattr(mc, 'to_dict') else mc),
         )
 
-        # Check for completed run
-        done = registry.get_completed_run(fp, th)
+        # Check for completed run with enough samples
+        done = registry.get_completed_run(fp, th, min_samples=tc.target_samples)
         if done:
             run = cls(done['id'], arch, mc, tc, registry, workspace, exp_name)
-            return run, False  # exists, not created
+            return run, False  # exists, fully done
 
-        # Create new
+        # Find existing (possibly partial) run or create new
         model_name = cls._model_name(arch, mc, vary_value=None)
         run_id, created = registry.find_or_create_run(
             fp, th, model_name,

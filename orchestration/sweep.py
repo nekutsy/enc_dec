@@ -212,7 +212,7 @@ class Sweep:
                 arch = resolve_architecture(v, self.sc.vary, cfg)
                 fp = arch_fingerprint(arch['sizes'], self.mc)
                 th = training_hash(self.tc)
-                done = self.registry.get_completed_run(fp, th)
+                done = self.registry.get_completed_run(fp, th, min_samples=self.tc.target_samples)
                 tag = ' ✓' if done else ''
                 print(f'{v:>8}  {arch["n"]:>3}  {arch["b"]:>7.4g}  {arch["n_params"]:>10,}{tag}')
             except Exception as e:
@@ -241,14 +241,17 @@ class Sweep:
                 arch, self.mc, self.tc, self.registry, self.ws, self.exp_name)
 
             if not created and run is not None:
-                # Check if already done
+                # Already fully done at target_samples or higher
                 rd = self.registry.get_run(run.run_id)
-                if rd and rd.get('status') == 'done':
+                if rd and rd.get('status') == 'done' and rd.get('total_samples', 0) >= self.tc.target_samples:
                     val = rd.get('final_train_loss')
                     print(f'  already done (loss={val})')
                     self.registry.link_run(exp_id, run.run_id, vary_value)
                     completed[vary_value] = val if val is not None else 1e9
                     continue
+                elif rd and rd.get('status') == 'done':
+                    stale = rd.get('total_samples', 0)
+                    print(f'  done at {stale:,} samples < target {self.tc.target_samples:,} — retraining')
                 else:
                     print(f'  run exists but not done (status={rd.get("status")}) — retrying')
 

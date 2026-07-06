@@ -6,7 +6,7 @@ are automatically included without manual synchronisation.
 Exclusions:
   _ARCH_EXCLUDE    — fields already encoded in sizes (seq_len, bottleneck)
   _TRAIN_EXCLUDE   — fields that don't affect training outcome (num_workers,
-                     checkpoint_interval, early_stop_patience)
+                     checkpoint_interval, early_stop_patience, target_samples)
 """
 
 import hashlib
@@ -21,6 +21,7 @@ _ARCH_EXCLUDE = frozenset({'seq_len', 'bottleneck'})
 # Fields of TrainConfig that do NOT affect training results.
 _TRAIN_EXCLUDE = frozenset({
     'num_workers', 'checkpoint_interval', 'early_stop_patience',
+    'target_samples',
 })
 
 
