@@ -238,6 +238,7 @@ class Run:
         print(f'  training {rem:,} samples...')
         t_start = time_mod.time()
 
+        interrupted = False
         try:
             val_interval = getattr(self.tc, 'val_interval', None)
             ckpt_interval = self.tc.checkpoint_interval
@@ -279,16 +280,18 @@ class Run:
                 raise
         except KeyboardInterrupt:
             print('\n  ⚠ Interrupted')
+            interrupted = True
             result = RunResult(
                 total_samples=start_samples,
                 status='interrupted',
                 error_message='KeyboardInterrupt',
             )
         finally:
-            del model
-            del optimizer
-            gc.collect()
-            cuda_safe_cleanup()
+            if not interrupted:
+                del model
+                del optimizer
+                gc.collect()
+                cuda_safe_cleanup()
 
         self.registry.finish_run(self.run_id, result)
         self.ws.write_result(self.run_id, result, self.model_name)

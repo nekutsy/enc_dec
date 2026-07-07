@@ -36,17 +36,33 @@ def _validate(model, val_loader, criterion, device):
 class Interruptible:
     """Context manager that sets _interrupted on SIGINT/SIGTERM.
 
+    On signal: shuts down DataLoader subprocess workers immediately.
+    This prevents the main process from hanging on DataLoader.__next__()
+    when workers are killed by the same signal delivered to the process group.
+
     No CUDA calls in the handler — safe for GPU training.
     Usage:
-        with Interruptible() as flag:
+        with Interruptible(train_loader) as flag:
             if flag.interrupted: ...
     """
 
-    def __init__(self):
+    def __init__(self, *loaders: DataLoader):
         self.interrupted = False
+        self._loaders = loaders
 
     def _on_signal(self, signum, frame):
         self.interrupted = True
+        # Kill DataLoader workers immediately — they may have already
+        # received SIGINT via process group and died, so the main process
+        # would hang forever waiting for them in __next__().
+        for loader in self._loaders:
+            if hasattr(loader, '_iterator'):
+                it = loader._iterator
+                if it is not None and hasattr(it, '_shutdown_workers'):
+                    try:
+                        it._shutdown_workers()
+                    except Exception:
+                        pass
 
     def __enter__(self):
         self._prev_sigint = signal.signal(signal.SIGINT, self._on_signal)
@@ -127,8 +143,8 @@ def run_training(start_samples: int, max_samples: int, model, optimizer, criteri
     sys.stderr.flush()
 
     try:
-        with Interruptible() as interrupt:
-            while total_samples < max_samples and not _early_stopped:
+        with Interruptible(train_loader) as interrupt:
+            while total_samples < max_samples and not _early_stopped and not interrupt.interrupted:
                 model.train()
                 for x_batch, y_batch in train_loader:
                     if interrupt.interrupted or total_samples >= max_samples:
@@ -216,15 +232,16 @@ def run_training(start_samples: int, max_samples: int, model, optimizer, criteri
                         next_checkpoint = total_samples + checkpoint_interval
                         next_update = total_samples + UPDATE_INTERVAL
 
-                if total_samples >= max_samples:
+                if total_samples >= max_samples or interrupt.interrupted:
                     break
+
+            # ── Interrupt exit — skip ALL CUDA calls (GPU may be in ERR) ──
+            if interrupt.interrupted:
+                print("\nTraining interrupted. Skipping GPU cleanup.", file=sys.stderr, flush=True)
+                raise KeyboardInterrupt()
+
     except KeyboardInterrupt:
-        print("\nTraining interrupted. Cleaning up GPU...", file=sys.stderr, flush=True)
-        _cuda_safe_cleanup()
-        print("Saving checkpoint...", file=sys.stderr, flush=True)
-        save_checkpoint(model, optimizer, model_path,
-                        checkpoint_scheduler=checkpoint_scheduler,
-                        step_scheduler=step_scheduler)
+        print("\nTraining interrupted.", file=sys.stderr, flush=True)
         raise
 
     # ── Normal exit ──

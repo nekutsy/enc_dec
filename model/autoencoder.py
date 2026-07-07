@@ -1,6 +1,28 @@
 """Symmetric autoencoder with configurable activation and normalization."""
 
+import torch
 import torch.nn as nn
+
+
+class RMSNorm(nn.Module):
+    """RMS Normalization — scale-only, no mean-centering, no bias.
+
+    RMSNorm(x) = x * g / sqrt(mean(x²) + eps)
+
+    Preserves directional structure better than LayerNorm for autoencoders:
+    - No mean subtraction → linear bias term is not wasted
+    - Learns per-feature gain γ
+    - Stable at high dimensions → no ε-float-underflow risk
+    """
+
+    def __init__(self, dim: int, eps: float = 1e-5):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(dim))
+        self.eps = eps
+
+    def forward(self, x):
+        rms = torch.sqrt(torch.mean(x * x, dim=-1, keepdim=True) + self.eps)
+        return x * self.weight / rms
 
 
 _ACTIVATIONS = {
@@ -13,6 +35,7 @@ _ACTIVATIONS = {
 _NORMS = {
     'batchnorm': nn.BatchNorm1d,
     'layernorm': nn.LayerNorm,
+    'rmsnorm': RMSNorm,
     'none': lambda dim: nn.Identity(),
 }
 
