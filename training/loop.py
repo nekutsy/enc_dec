@@ -65,16 +65,16 @@ def run_training(start_samples: int, max_samples: int, model, optimizer, criteri
                  seq_len, grad_clip=1.0, num_workers=0,
                  step_scheduler=None, checkpoint_scheduler=None,
                  early_stop_patience=3, no_val=False,
-                 val_interval: int | None = None):
+                 val_interval: int | None = None,
+                 checkpoint_interval: int | None = None):
     """Main training loop.
 
     Args:
         train_logger: TrainingLogger instance.
-        no_val: if True, skip validation for logging (faster CSV).
-            Plateau scheduler and early-stopping still receive val loss
-            (computed at the same checkpoints, just not persisted to CSV).
-        val_interval: samples between validation passes. Defaults to
-            250k when no_val, 500k otherwise.
+        no_val: if True, skip validation entirely (no val pass, no val_loss in CSV).
+            Checkpoint scheduler and early-stopping only see val loss when no_val=False.
+        val_interval: samples between validation passes. Defaults to 100k.
+        checkpoint_interval: samples between model saves. Defaults to val_interval.
     """
     os.makedirs(os.path.dirname(model_path), exist_ok=True)
     device = next(model.parameters()).device
@@ -84,19 +84,20 @@ def run_training(start_samples: int, max_samples: int, model, optimizer, criteri
         train_dataset, batch_size=batch_size, shuffle=True,
         num_workers=num_workers,
         pin_memory=(device.type == 'cuda'),
-        prefetch_factor=4 if num_workers > 0 else None,
+        prefetch_factor=8 if num_workers > 0 else None,
         persistent_workers=(num_workers > 0),
     )
 
-    LOG_INTERVAL = val_interval or (100_000 if no_val else 500_000)
+    val_interval = val_interval or 100_000
+    checkpoint_interval = checkpoint_interval or val_interval
     val_loader = DataLoader(
         val_dataset, batch_size=batch_size, shuffle=False,
         num_workers=num_workers,
         pin_memory=(device.type == 'cuda'),
-        prefetch_factor=4 if num_workers > 0 else None,
+        prefetch_factor=8 if num_workers > 0 else None,
     )
 
-    scaler = torch.amp.GradScaler('cuda') if device.type == 'cuda' else None
+    use_amp = (device.type == 'cuda')
 
     total_samples = start_samples
     UPDATE_INTERVAL = 25_000
@@ -119,7 +120,8 @@ def run_training(start_samples: int, max_samples: int, model, optimizer, criteri
     sum_train_count = 0
 
     next_update = total_samples + UPDATE_INTERVAL
-    next_log = total_samples + LOG_INTERVAL
+    next_val = total_samples + val_interval
+    next_checkpoint = total_samples + checkpoint_interval
 
     sys.stderr.write("\r\033[K")
     sys.stderr.flush()
@@ -139,7 +141,7 @@ def run_training(start_samples: int, max_samples: int, model, optimizer, criteri
                     optimizer.zero_grad(set_to_none=True)
                     loss_val = step_batch(
                         model, x_batch, y_batch, criterion, optimizer,
-                        scaler=scaler, grad_clip=grad_clip,
+                        use_amp=use_amp, grad_clip=grad_clip,
                         step_scheduler=step_scheduler,
                     )
 
@@ -162,26 +164,27 @@ def run_training(start_samples: int, max_samples: int, model, optimizer, criteri
                         sys.stderr.flush()
                         next_update = total_samples + UPDATE_INTERVAL
 
-                    # ── Checkpoint ──
-                    if total_samples >= next_log:
+                    # ── Validation (separate from checkpoint) ──
+                    if total_samples >= next_val:
                         avg_train_loss = sum_train_loss / sum_train_count if sum_train_count > 0 else 0
-                        avg_val_loss = _validate(model, val_loader, criterion, device)
-                        model.train()
+                        avg_val_loss = None
+                        if not no_val:
+                            avg_val_loss = _validate(model, val_loader, criterion, device)
+                            model.train()
 
                         if checkpoint_scheduler is not None:
                             checkpoint_scheduler.step(avg_val_loss)
 
                         # Early-stopping + best model (always on val loss)
-                        if avg_val_loss < best_val_loss:
+                        if avg_val_loss is not None and avg_val_loss < best_val_loss:
                             best_val_loss = avg_val_loss
                             stale_checkpoints = 0
                             save_checkpoint(model, optimizer, best_model_path,
                                             checkpoint_scheduler=checkpoint_scheduler,
                                             step_scheduler=step_scheduler)
                         elif checkpoint_scheduler is not None and hasattr(checkpoint_scheduler, 'is_exploring') and checkpoint_scheduler.is_exploring():
-                            # Don't count probe/cooldown checkpoints as stale
                             pass
-                        else:
+                        elif avg_val_loss is not None:
                             stale_checkpoints += 1
 
                         cur_lr = optimizer.param_groups[0]['lr']
@@ -201,9 +204,16 @@ def run_training(start_samples: int, max_samples: int, model, optimizer, criteri
                         #     _early_stopped = True
                         #     break
 
+                        next_val = total_samples + val_interval
+
+                    # ── Checkpoint (model save only, no validation) ──
+                    if total_samples >= next_checkpoint:
+                        save_checkpoint(model, optimizer, model_path,
+                                        checkpoint_scheduler=checkpoint_scheduler,
+                                        step_scheduler=step_scheduler)
                         sum_train_loss = 0.0
                         sum_train_count = 0
-                        next_log = total_samples + LOG_INTERVAL
+                        next_checkpoint = total_samples + checkpoint_interval
                         next_update = total_samples + UPDATE_INTERVAL
 
                 if total_samples >= max_samples:

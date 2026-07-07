@@ -24,7 +24,7 @@ class ModelConfig:
     seq_len: int = 32
     bottleneck: int | None = None      # None → seq_len
     activation: str = 'silu'           # silu | relu | gelu | leaky_relu
-    normalization: str = 'batchnorm'   # batchnorm | layernorm | none
+    normalization: str = 'layernorm'    # layernorm | batchnorm | none
     shape: str = 'rectangular'         # rectangular | pyramid | interleaved | trapezoid
     trapezoid_alpha: float = 0.1       # trapezoid: deviation from base hidden_dim
     init: str = 'orthogonal'           # orthogonal | xavier | kaiming
@@ -87,8 +87,9 @@ class TrainConfig:
     noise_std: float = 3.0               # σ for Gaussian noise on uint21 values
     early_stop_patience: int = 20
     train_ratio: float = 0.999
-    checkpoint_interval: int = 100_000   # samples between validation/checkpoint passes
-    num_workers: int = 2               # DataLoader workers (2 for GPU, 0 for CPU)
+    val_interval: int = 100_000         # samples between validation passes
+    checkpoint_interval: int = 1_000_000  # samples between model saves
+    num_workers: int = 4               # DataLoader workers (4 for GPU, 0 for CPU)
 
     def to_dict(self) -> dict:
         return asdict(self)

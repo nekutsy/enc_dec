@@ -34,14 +34,11 @@ from orchestration.workspace import Workspace
 
 
 def compile_model(model, device):
-    """Compile model for GPU — skip unsafe cases."""
+    """Compile model for GPU — skip tiny models."""
     if device.type != 'cuda':
         return model
     n_params = sum(p.numel() for p in model.parameters())
     if n_params <= 50_000:
-        return model
-    has_bn = any(isinstance(m, nn.BatchNorm1d) for m in model.modules())
-    if has_bn:
         return model
     try:
         return torch.compile(model, mode='default')
@@ -242,6 +239,8 @@ class Run:
         t_start = time_mod.time()
 
         try:
+            val_interval = getattr(self.tc, 'val_interval', None)
+            ckpt_interval = self.tc.checkpoint_interval
             final_samples = run_training(
                 start_samples, target_samples, model, optimizer, criterion,
                 train_ds, val_ds, train_logger, model_path, bs,
@@ -250,7 +249,8 @@ class Run:
                 checkpoint_scheduler=checkpoint_scheduler,
                 early_stop_patience=self.tc.early_stop_patience,
                 no_val=no_val,
-                val_interval=self.tc.checkpoint_interval,
+                val_interval=val_interval,
+                checkpoint_interval=ckpt_interval,
             )
 
             dur = time_mod.time() - t_start

@@ -39,7 +39,7 @@ def main():
     p.add_argument('--seq-len', type=int, default=128)
     p.add_argument('--bottleneck', type=int, default=None)
     p.add_argument('--activation', default='silu')
-    p.add_argument('--normalization', default='batchnorm')
+    p.add_argument('--normalization', default='layernorm')
     p.add_argument('--dropout', type=float, default=0.0)
     p.add_argument('--samples', type=str, default='50M')
     p.add_argument('--batch-size', type=int, default=256)
@@ -50,7 +50,7 @@ def main():
     p.add_argument('--grad-clip', type=float, default=1.0)
     p.add_argument('--noise-prob', type=float, default=0.0)
     p.add_argument('--noise-std', type=float, default=3.0)
-    p.add_argument('--num-workers', type=int, default=2)
+    p.add_argument('--num-workers', type=int, default=4)
     p.add_argument('--device', default='auto')
     p.add_argument('--no-val', action='store_true')
 

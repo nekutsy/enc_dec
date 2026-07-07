@@ -154,7 +154,7 @@ def main(argv: list[str] | None = None):
     ])
 
     # ── Training loop ──
-    scaler = torch.amp.GradScaler('cuda') if device.type == 'cuda' else None
+    use_amp = (device.type == 'cuda')
     print(f'\nTraining on single batch... (target: loss < {args.target_loss})')
     print(f'{"Step":>8s}  {"Loss":>10s}  {"LR":>10s}  {"Time":>8s}')
 
@@ -178,7 +178,7 @@ def main(argv: list[str] | None = None):
             optimizer.zero_grad(set_to_none=True)
             loss_val = step_batch(
                 model, x_batch, x_batch, criterion, optimizer,
-                scaler=scaler, grad_clip=args.grad_clip,
+                use_amp=use_amp, grad_clip=args.grad_clip,
             )
             if loss_val < best_loss:
                 best_loss = loss_val
