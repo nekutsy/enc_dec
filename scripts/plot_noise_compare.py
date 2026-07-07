@@ -2,6 +2,7 @@
 
 import csv
 import os
+import sys
 from pathlib import Path
 from collections import defaultdict
 
@@ -11,11 +12,23 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 SESSIONS_DIR = Path(__file__).resolve().parent.parent / 'sessions'
-RUNS = {
-    '0.025': 'bbeda7548d05',
-    '0.25': 'c4cb0acad82f',
-}
 OUT_DIR = SESSIONS_DIR / 'plots'
+
+
+def _find_run_csv(run_id: str):
+    """Find log.csv for a run_id, handling new hash-model_name naming."""
+    runs_dir = SESSIONS_DIR / 'runs'
+    # Exact match
+    direct = runs_dir / run_id / 'log.csv'
+    if direct.exists():
+        return direct
+    # Prefix match (hash-model_name)
+    for entry in runs_dir.iterdir():
+        if entry.is_dir() and not entry.is_symlink() and entry.name.startswith(run_id):
+            csv_path = entry / 'log.csv'
+            if csv_path.exists():
+                return csv_path
+    return None
 
 
 def read_csv(csv_path):
@@ -31,12 +44,32 @@ def read_csv(csv_path):
     return data
 
 
-def main():
+def main(argv: list[str] | None = None):
+    """Compare two noise-level runs.
+
+    Usage: enc-dec plot noise LABEL1 RUN_ID1 LABEL2 RUN_ID2
+    """
+    if argv is None:
+        argv = sys.argv[1:]
+
+    if len(argv) < 4:
+        print("Usage: enc-dec plot noise LABEL1 RUN_ID1 LABEL2 RUN_ID2")
+        print("Example: enc-dec plot noise 0.025 bbeda7548d05 0.25 c4cb0acad82f")
+        return
+
+    RUNS = {
+        argv[0]: argv[1],
+        argv[2]: argv[3],
+    }
     os.makedirs(OUT_DIR, exist_ok=True)
 
     runs_data = {}
     for label, run_id in RUNS.items():
-        csv_path = SESSIONS_DIR / 'runs' / run_id / 'log.csv'
+        # Resolve run dir (handles new hash-model_name naming)
+        csv_path = _find_run_csv(run_id)
+        if csv_path is None:
+            print(f"  ⚠ Run '{run_id}' not found — skip")
+            continue
         runs_data[label] = read_csv(csv_path)
 
     fig, axes = plt.subplots(1, 3, figsize=(18, 5.5))
@@ -98,4 +131,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    main(sys.argv[1:])

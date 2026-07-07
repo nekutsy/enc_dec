@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# enc-dec — unified CLI for autoencoder training & experiments.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+cd "$ROOT"
+exec python3 cli/main.py "$@"

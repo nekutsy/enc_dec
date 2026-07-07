@@ -330,11 +330,15 @@ def main(device_override: torch.device | None = None):
     print("Done.")
 
 
-if __name__ == "__main__":
+def run(argv: list[str] | None = None):
+    """Parse args and call main. For use as library function."""
+    import sys as _sys
+    if argv is None:
+        argv = _sys.argv[1:]
     parser = argparse.ArgumentParser(description='Interactive model inference')
     parser.add_argument('--gpu', action='store_true', help='Use GPU')
     parser.add_argument('--cpu', action='store_true', help='Force CPU (default)')
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.gpu and torch.cuda.is_available():
         main(torch.device('cuda'))
@@ -342,3 +346,7 @@ if __name__ == "__main__":
         if args.gpu:
             print("CUDA not available, falling back to CPU")
         main(torch.device('cpu'))
+
+
+if __name__ == "__main__":
+    run()

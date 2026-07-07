@@ -1,198 +1,159 @@
-# SWEEP.md — Свипы и тренировка
+# SWEEP.md — Свипы и стратегии
 
-## `train.py` — одиночная модель
+> Базовая инструкция по использованию и формат JSON-конфигов — в **[USAGE.md](USAGE.md)**.
 
-Универсальный CLI для обучения одной модели с авто-возобновлением. Заменил `train_best.py` + `resume_n4.py`.
+Sweep-система перебирает параметры архитектуры/обучения по заданной стратегии, используя Registry для дедупликации: если модель с такими же параметрами уже обучена — пропускает.
 
-```bash
-# Базовый запуск
-python train.py --n 3 --budget 160M --samples 50M
-
-# Plateau + свой LR
-python train.py --n 2 --budget 160M --samples 120M \
-  --lr 0.002 --scheduler plateau --early-stop 10
-
-# Возобновление (автоматическое — просто запусти ещё раз)
-python train.py --n 3 --budget 160M --samples 50M
-
-# Сброс LR при возобновлении (веса остаются, оптимизатор/шедулер — с нуля)
-python train.py --n 4 --budget 160M --samples 100M --reset-lr --lr 0.001
-
-# Полный fresh start (игнорировать чекпоинты)
-python train.py --n 3 --budget 160M --samples 50M --fresh
-
-# Из JSON-конфига
-python train.py --config train_best.json
-
-# Кастомная папка
-python train.py --n 3 --budget 160M --samples 50M --workspace sessions/my_exp
-```
-
-### Все аргументы
-
-| Флаг | По умолчанию | Описание |
-|------|-------------|----------|
-| `--config` | — | JSON-конфиг (CLI-флаги переопределяют) |
-| `--fresh` | false | Игнорировать чекпоинты, начать с нуля |
-| `--reset-lr` | false | Сбросить оптимизатор/шедулер, сохранить веса |
-
-**Архитектура:**
-
-| Флаг | По умолчанию |
-|------|-------------|
-| `--seq-len` | 128 |
-| `--n` | **обязателен** |
-| `--b` | — (auto из бюджета) |
-| `--budget` | **обязателен**, e.g. `160M` |
-| `--bottleneck` | равен seq_len |
-| `--activation` | silu |
-| `--normalization` | batchnorm |
-| `--init-gain` | 1.0 |
-| `--dropout` | 0.0 |
-| `--norm-bottleneck` | false |
-| `--norm-last` | false |
-
-**Обучение:**
-
-| Флаг | По умолчанию |
-|------|-------------|
-| `--samples` | 50M |
-| `--batch-size` | 256 |
-| `--lr` | 0.001 |
-| `--scheduler` | onecycle |
-| `--optimizer` | adamw_fused |
-| `--weight-decay` | 0.01 |
-| `--grad-clip` | 1.0 |
-| `--early-stop` | 3 |
-| `--num-workers` | 2 |
-| `--train-ratio` | 0.999 |
-| `--no-val` | false (skip val in CSV) |
-
-**Вывод:**
-
-| Флаг | По умолчанию |
-|------|-------------|
-| `--workspace` | sessions/train |
-| `--name` | auto (`n{val}_s{seq_len}`) |
-| `--device` | auto |
-
----
-
-## `sweep.py` — сетка/бинарный поиск
-
-### Быстрый старт
+## Команды
 
 ```bash
-# Из готового конфига
-python sweep.py run --config configs/ratio_40m.json
+# Из JSON-конфига (основной способ)
+enc-dec sweep run --config configs/noise_sweep.json
 
-# Shorthand (без файла)
-python sweep.py grid --vary n=2,4,6,8,10 --solve b --budget 40M
+# С оверрайдом — не редактируя JSON
+enc-dec sweep run --config configs/rect_sweep_384m.json \
+  --override model.seq_len=64 sweep.strategy=binary
 
-# Конфиг + оверрайд
-python sweep.py run --config configs/ratio_40m.json \
-  --override model.seq_len=64 sweep.strategy=binary sweep.values=1,10
+# Shorthand: grid
+enc-dec sweep grid --vary n=2,4,6,8,10 --solve b --budget 40M
+
+# Shorthand: binary
+enc-dec sweep binary --vary n --range 2 16 --solve b --budget 40M
 ```
 
-### `python sweep.py run` — из JSON-конфига
+Оверрайды через `--override`: dotted-нотация (`model.seq_len=64`, `training.lr=0.002`, `sweep.solve=n`). Значение подставляется по типу существующего поля (если поле int — парсится как int, float → float, иначе str).
 
-```bash
-python sweep.py run --config <путь> [--override путь=значение ...]
-```
+## Стратегии
 
-Оверрайды: dotted-нотация (`model.seq_len=64`, `training.lr=0.002`, `sweep.solve=n`).
-
-### `python sweep.py grid` — shorthand grid
-
-```bash
-python sweep.py grid --vary n=2,3,4,5,6 [опции]
-```
-
-| Флаг | По умолчанию | Описание |
-|------|-------------|----------|
-| `--vary` | **обязателен** | `n=2,3,4,5` или `b=0.14,0.33,1,2,4,8` |
-| `--solve` | нет | `b` (вычислить b из бюджета) или `n` |
-| `--fixed` | нет | `n=7 b=4 lr=0.001` |
-| `--budget` | нет | `40M`, `160M` |
-| `--seq-len` | 32 | |
-| `--bottleneck` | равен seq_len | |
-| `--lr` | 0.001 | |
-| `--scheduler` | onecycle | onecycle / plateau / cosine / none |
-| `--target-samples` | 5M | `120M` |
-| `--workspace` | sessions/sweep | |
-| `--sweep-log` | sessions/sweep_summary.csv | |
-| `--batch-size` | 256 | |
-| `--binary-on` | нет | Для grid: вложенный бинарный поиск |
-| `--range` | нет | Границы бинарного поиска |
-
-### `python sweep.py binary` — shorthand binary
-
-```bash
-python sweep.py binary --vary n --range 1 16 [опции]
-```
-
----
-
-## JSON-конфиг
+### `grid` — полный перебор
 
 ```json
-{
-  "name": "experiment_name",
-  "model": {
-    "seq_len": 32,
-    "bottleneck": null,
-    "activation": "silu",
-    "normalization": "batchnorm",
-    "init_gain": 1.0,
-    "dropout": 0.0,
-    "norm_bottleneck": false,
-    "norm_last": false
-  },
-  "training": {
-    "target_samples": 5000000,
-    "batch_size": 256,
-    "lr": 0.001,
-    "grad_clip": 1.0,
-    "scheduler": "onecycle",
-    "warmup_fraction": 0.05,
-    "optimizer": "adamw_fused",
-    "weight_decay": 0.01,
-    "decay_linear_only": true,
-    "early_stop_patience": 3,
-    "train_ratio": 0.999,
-    "num_workers": 2
-  },
-  "sweep": {
-    "strategy": "grid",
-    "vary": "n",
-    "values": [2, 4, 6, 8, 10],
-    "solve": "b",
-    "budget": 40000000,
-    "fixed": {}
-  },
-  "output": {
-    "workspace": "sessions/ratio40",
-    "sweep_log": "sessions/ratio40_summary.csv",
-    "device": "auto"
-  }
+"sweep": {
+  "strategy": "grid",
+  "vary": "n",
+  "values": [2, 4, 6, 8, 10],
+  "solve": "b",
+  "budget": 40000000
 }
 ```
 
----
+Перебирает все `values` по порядку. С `solve: "b"` для каждого n подбирает коэффициент ширины `b` под заданный бюджет параметров.
 
-## Ключевые изменения за июнь 2026
+### `binary` — бинарный поиск
 
-### Plateau scheduler
-- factor 0.7 (вместо 0.5), min_lr=1e-6
-- Состояние сохраняется в `.sch` и восстанавливается при рестарте
-- Всегда смотрит на val loss (даже при `no_val=True` в sweep)
+```json
+"sweep": {
+  "strategy": "binary",
+  "vary": "n",
+  "values": [2, 16],
+  "solve": "b",
+  "budget": 40000000
+}
+```
 
-### Валидация
-- `train_ratio` по умолчанию 0.999 (0.1% валидационной выборки)
-- `no_val` только пропускает запись val в CSV (scheduler и early-stop всё равно получают val loss)
-- `_best.pth` сохраняется всегда (раньше — только при `no_val=False`)
-- Early-stopping работает всегда
+`values` — границы диапазона `[lo, hi]`. Алгоритм:
+1. Пробует границы (lo, hi)
+2. Смотрит у какой из них loss лучше
+3. Биссектирует между лучшей и второй лучшей
+4. Повторяет до сходимости (соседние значения уже проверены)
 
-### Файлы
-- `train.py` — заменил `train_best.py` + `resume_n4.py`
-- `sweep_gain.py`, `sweep_norm.py`, `sweep_norm_none.py` — удалены (всё через `train.py` + оверрайды или JSON-конфиг)
+### `grid` с вложенным бинарным поиском
+
+Можно задать `binary_on` для grid'а — каждый кандидат проверяется бинарным поиском по вложенному параметру:
+
+```json
+"sweep": {
+  "strategy": "grid",
+  "vary": "noise_prob",
+  "values": [0.01, 0.05, 0.1, 0.25, 0.5, 0.75],
+  "binary_on": "lr",
+  "binary_range": [0.0001, 0.01],
+  "fixed": {"n": 6},
+  "solve": "b",
+  "budget": 384000000
+}
+```
+
+Каждый `noise_prob` → бинарный поиск оптимального `lr` → запись лучшего.
+
+## Параметр `solve`
+
+Управляет тем, как заполняются свободные параметры архитектуры:
+
+| solve | Описание |
+|-------|----------|
+| `"b"` | По `n` + `budget` подбирает коэффициент ширины `b` |
+| `"n"` | По `b` + `budget` подбирает количество слоёв `n` |
+| `null` | Оба параметра заданы вручную (через `fixed` или values) |
+
+## Параметр `vary`
+
+Что перебирается. Допустимые значения:
+
+**Архитектурные** (`MODEL_LEVEL_VARY`):
+- `n` — количество скрытых слоёв
+- `b` — коэффициент ширины
+- `bottleneck` — размер бутылочного горла
+- `normalization`, `activation`, `dropout`, `norm_bottleneck`, `norm_last`, `trapezoid_alpha`
+
+**Тренировочные** (`TRAIN_LEVEL_VARY`):
+- `lr`, `scheduler`, `grad_clip`, `optimizer`, `weight_decay`, `batch_size`, `num_workers`, `noise_prob`, `noise_std`
+
+Если `vary` — training-level параметр, в `fixed` должны быть заданы `n` и/или `b`.
+
+## Архитектурные формы
+
+Задаются через `model.shape`:
+
+| `shape` | Описание | Примечание |
+|---------|----------|------------|
+| `rectangular` | `[D] + [H]×n + [B] + [H]×n + [D]` | Все скрытые слои одной ширины |
+| `pyramid` | Сужающаяся к центру | `solve=d` подбирает градиент сужения |
+| `interleaved` | Wide-слои чередуются с narrow | Решает ту же задачу, что и pyramid |
+| `trapezoid` | Линейная интерполяция ширины | `trapezoid_alpha` — отклонение от base |
+
+## Готовые конфиги
+
+```
+configs/
+├── rect_sweep_384m.json            # n=2..8, solve=b, budget=384M
+├── trapezoid_sweep_384m.json        # То же с trapezoid shape
+├── pyramid_sweep_384m.json          # То же с pyramid shape
+├── interleaved_sweep_384m.json      # То же с interleaved shape
+├── noise_sweep.json                 # noise_prob grid
+├── bottleneck_sweep_4M.json         # bottleneck размеры
+├── bs_sweep_4M_noise0025.json       # batch sizes
+└── ...
+```
+
+## Дедупликация и кэширование
+
+Registry (SQLite `sessions/registry.db`) хранит fingerprint каждой обученной модели (архитектура + тренировочный конфиг). При повторном запуске того же sweep'а:
+
+1. `Run.find_or_create()` проверяет Registry
+2. Если `status=done` + `total_samples >= target_samples` → пропускает
+3. Если частично обучена (меньше семплов) → возобновляет
+4. Если не найдена → создаёт новую
+
+Это позволяет:
+- Перезапускать sweep без потери прогресса (прерванные модели продолжаются)
+- Менять JSON-конфиг и запускать заново — старые модели не переобучаются
+- Разные sweep'ы переиспользуют одинаковые модели (например, noise_sweep и rect_sweep с пересекающимися параметрами)
+
+## Сводка по аргументам sweep
+
+| Флаг | Описание |
+|------|----------|
+| `--config` | JSON-конфиг (для `run`) |
+| `--override` | `путь=значение`, можно несколько |
+| `--vary` | `n=2,4,6` (grid) или имя параметра (binary) |
+| `--range` | `lo hi` (binary) |
+| `--solve` | `b` или `n` |
+| `--fixed` | `n=7 b=4` — фиксированные параметры |
+| `--budget` | `40M` |
+| `--seq-len` | 32 |
+| `--lr` | 0.001 |
+| `--scheduler` | onecycle |
+| `--target-samples` | 5M |
+| `--workspace` | sessions/sweep |
+| `--device` | auto |
