@@ -11,6 +11,7 @@ import os
 import re
 
 from encoding.unicode21 import UNICODE_BITS
+from model.architecture import count_params
 
 
 def scan_models(sessions_dir: str = 'sessions') -> list[
@@ -188,15 +189,6 @@ def parse_norm_from_name(path: str) -> tuple[bool, bool]:
     if m:
         return m.group(1) == 'T', m.group(2) == 'T'
     return False, False
-
-
-def count_params(sizes: list[int]) -> int:
-    """Count Linear + BatchNorm1d parameters for the given layer sizes."""
-    n = 0
-    for i in range(len(sizes) - 1):
-        n += sizes[i] * sizes[i + 1] + sizes[i + 1]
-        n += 2 * sizes[i + 1]
-    return n
 
 
 def load_model(path: str, sizes: list[int], device: str | None = None):

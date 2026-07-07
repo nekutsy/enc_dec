@@ -7,15 +7,7 @@ import torch
 from torch.utils.data import Dataset
 
 from configs import UNICODE_BITS
-from encoding.unicode21 import (
-    chars_to_bits,
-    bits_to_chars as _bits_to_chars,
-    seq_to_vec,
-    vec_to_seq,
-    split_into_chunks,
-    pack_bits_uint8,
-    unpack_uint8_to_float,
-)
+from encoding.unicode21 import pack_bits_uint8, unpack_uint8_to_float
 
 FULL_BITS_CACHE = "data/cache/full_bits.u8"   # uint8 packed — 8 bits/byte (~0.13 GB)
 OLD_FLOAT_CACHE = "data/cache/full_bits.pt"   # legacy float32 (auto-migrated)
@@ -44,9 +36,7 @@ def load_text(data_dir="data/dataset", verbose=False):
     return "".join(texts)
 
 
-# Re-exported from encoding.unicode21 for backward compatibility
-_pack_bits_uint8 = pack_bits_uint8
-_unpack_uint8_to_float = unpack_uint8_to_float
+
 
 
 def _build_full_bits(text):
@@ -64,23 +54,23 @@ def _build_full_bits(text):
     if os.path.exists(FULL_BITS_CACHE):
         packed = torch.load(FULL_BITS_CACHE, map_location='cpu', weights_only=True)
         print(f"  Loaded uint8 cache: {packed.numel() / 1e6:.1f} MB")
-        return _unpack_uint8_to_float(packed, total_bits)
+        return unpack_uint8_to_float(packed, total_bits)
 
     # Legacy float32 cache → migrate
     if os.path.exists(OLD_FLOAT_CACHE):
         print("  Migrating old float32 cache → uint8...")
-        packed = torch.from_numpy(_pack_bits_uint8(codes))
+        packed = torch.from_numpy(pack_bits_uint8(codes))
         torch.save(packed, FULL_BITS_CACHE)
         os.remove(OLD_FLOAT_CACHE)
         print(f"  Migrated: {packed.numel() / 1e6:.1f} MB uint8")
-        return _unpack_uint8_to_float(packed, total_bits)
+        return unpack_uint8_to_float(packed, total_bits)
 
     # Fresh build
-    packed = torch.from_numpy(_pack_bits_uint8(codes))
+    packed = torch.from_numpy(pack_bits_uint8(codes))
     torch.save(packed, FULL_BITS_CACHE)
     n_gb = packed.numel() / 1e9
     print(f"  Built uint8 cache: {n_gb:.2f} GB (unpacked: {total_bits * 4 / 1e9:.2f} GB float32)")
-    return _unpack_uint8_to_float(packed, total_bits)
+    return unpack_uint8_to_float(packed, total_bits)
 
 
 class SlidingWindowDataset(Dataset):
@@ -161,11 +151,7 @@ class NoisyDataset(Dataset):
         return noisy_bits
 
 
-# Re-exported from encoding.unicode21 for backward compatibility
-chars_to_bits = chars_to_bits  # already imported above
-vec2seq = vec_to_seq
-seq2vec = seq_to_vec
-split_into_chunks = split_into_chunks
+
 
 
 def prepare_data(text: str, seq_len: int, train_ratio: float = 0.99):

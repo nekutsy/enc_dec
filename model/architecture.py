@@ -116,19 +116,22 @@ def make_interleaved(input_dim: int, hidden_dim: int, bottleneck: int,
 
 # ── Budget-constrained solvers ──────────────────────────────
 
-def solve_b_for_n_trapezoid(n_hidden: int, target_params: int, input_dim: int,
-                              bottleneck: int, alpha: float
-                              ) -> tuple[float, int, int]:
-    """Binary search b ∈ [0.1, 20] for trapezoid architecture.
 
-    Returns (b, hidden_dim, n_params).
+def _binary_search_b(make_sizes_fn, target_params: int, input_dim: int,
+                     lo: float = 0.1, hi: float = 20.0, iters: int = 30
+                     ) -> tuple[float, int, int]:
+    """Generic binary search for width parameter.
+
+    Searches ∈ [lo, hi] for the value that minimises |n_params − target_params|.
+    make_sizes_fn(param) → list[int] layer sizes.
+
+    Returns (param, hidden_dim, n_params).
     """
-    def _p(b_val):
-        h = max(1, int(round(input_dim * b_val)))
-        return count_params(make_trapezoid(input_dim, h, bottleneck, n_hidden, alpha))
+    def _p(x):
+        h = max(1, int(round(input_dim * x)))
+        return count_params(make_sizes_fn(h))
 
-    lo, hi = 0.1, 20.0
-    for _ in range(30):
+    for _ in range(iters):
         mid = (lo + hi) / 2
         if _p(mid) < target_params:
             lo = mid
@@ -136,50 +139,26 @@ def solve_b_for_n_trapezoid(n_hidden: int, target_params: int, input_dim: int,
             hi = mid
 
     p_lo, p_hi = _p(lo), _p(hi)
-    b_val = (round(lo, 6) if abs(p_lo - target_params) <= abs(p_hi - target_params)
+    param = (round(lo, 6) if abs(p_lo - target_params) <= abs(p_hi - target_params)
              else round(hi, 6))
-    h = max(1, int(round(input_dim * b_val)))
-    return b_val, h, _p(b_val)
+    h = max(1, int(round(input_dim * param)))
+    return param, h, _p(param)
 
 
-def solve_b_for_n(n_hidden: int, target_params: int, input_dim: int,
-                  bottleneck: int) -> tuple[float, int, int]:
-    """Binary search b ∈ [0.1, 20] for rectangular architecture.
+def _binary_search_n(make_sizes_fn, target_params: int, hidden_dim: int,
+                     lo: int = 1, hi: int = 20, iters: int = 30
+                     ) -> tuple[int, int, int]:
+    """Generic binary search for depth parameter.
 
-    Returns (b, hidden_dim, n_params).
-    """
-    def _p(b_val):
-        h = max(1, int(round(input_dim * b_val)))
-        return count_params(make_rectangular(input_dim, h, bottleneck, n_hidden))
-
-    lo, hi = 0.1, 20.0
-    for _ in range(30):
-        mid = (lo + hi) / 2
-        if _p(mid) < target_params:
-            lo = mid
-        else:
-            hi = mid
-
-    p_lo, p_hi = _p(lo), _p(hi)
-    b_val = (round(lo, 6) if abs(p_lo - target_params) <= abs(p_hi - target_params)
-             else round(hi, 6))
-    h = max(1, int(round(input_dim * b_val)))
-    return b_val, h, _p(b_val)
-
-
-def solve_n_for_b(b_val: float, target_params: int, input_dim: int,
-                  bottleneck: int, max_n: int = 20
-                  ) -> tuple[int, int, int]:
-    """Binary search n ∈ [1, max_n] for rectangular architecture.
+    Searches n ∈ [lo, hi] for the value that minimises |n_params − target_params|.
+    make_sizes_fn(n) → list[int] layer sizes (hidden_dim already baked in).
 
     Returns (n, hidden_dim, n_params).
     """
-    def _p(n):
-        h = max(1, int(round(input_dim * b_val)))
-        return count_params(make_rectangular(input_dim, h, bottleneck, int(n)))
+    def _p(n_val):
+        return count_params(make_sizes_fn(int(n_val)))
 
-    lo, hi = 1, max_n
-    for _ in range(30):
+    for _ in range(iters):
         mid = int((lo + hi) // 2)
         if _p(mid) < target_params:
             lo = mid + 1
@@ -188,61 +167,49 @@ def solve_n_for_b(b_val: float, target_params: int, input_dim: int,
 
     p_lo, p_hi = _p(lo), _p(hi)
     n = lo if abs(p_lo - target_params) <= abs(p_hi - target_params) else hi
-    n = max(1, min(n, max_n))
-    h = max(1, int(round(input_dim * b_val)))
-    return n, h, _p(n)
+    n = max(1, min(n, hi))
+    return n, hidden_dim, _p(n)
+
+
+def solve_b_for_n(n_hidden: int, target_params: int, input_dim: int,
+                  bottleneck: int) -> tuple[float, int, int]:
+    return _binary_search_b(
+        lambda h: make_rectangular(input_dim, h, bottleneck, n_hidden),
+        target_params, input_dim)
+
+
+def solve_b_for_n_trapezoid(n_hidden: int, target_params: int, input_dim: int,
+                              bottleneck: int, alpha: float
+                              ) -> tuple[float, int, int]:
+    return _binary_search_b(
+        lambda h: make_trapezoid(input_dim, h, bottleneck, n_hidden, alpha),
+        target_params, input_dim)
 
 
 def solve_b_for_n_interleaved(n: int, target_params: int, input_dim: int,
                                bottleneck: int
                                ) -> tuple[float, int, int]:
-    """Binary search b ∈ [0.1, 20] for interleaved architecture.
+    return _binary_search_b(
+        lambda h: make_interleaved(input_dim, h, bottleneck, n),
+        target_params, input_dim)
 
-    Returns (b, hidden_dim, n_params).
-    """
-    def _p(b_val):
-        h = max(1, int(round(input_dim * b_val)))
-        return count_params(make_interleaved(input_dim, h, bottleneck, n))
 
-    lo, hi = 0.1, 20.0
-    for _ in range(30):
-        mid = (lo + hi) / 2
-        if _p(mid) < target_params:
-            lo = mid
-        else:
-            hi = mid
-
-    p_lo, p_hi = _p(lo), _p(hi)
-    b_val = (round(lo, 6) if abs(p_lo - target_params) <= abs(p_hi - target_params)
-             else round(hi, 6))
+def solve_n_for_b(b_val: float, target_params: int, input_dim: int,
+                  bottleneck: int, max_n: int = 20
+                  ) -> tuple[int, int, int]:
     h = max(1, int(round(input_dim * b_val)))
-    return b_val, h, _p(b_val)
+    return _binary_search_n(
+        lambda n: make_rectangular(input_dim, h, bottleneck, n),
+        target_params, h, lo=1, hi=max_n)
 
 
 def solve_n_for_b_interleaved(b_val: float, target_params: int, input_dim: int,
                                bottleneck: int, max_n: int = 20
                                ) -> tuple[int, int, int]:
-    """Binary search n ∈ [1, max_n] for interleaved architecture.
-
-    Returns (n, hidden_dim, n_params).
-    """
-    def _p(n):
-        h = max(1, int(round(input_dim * b_val)))
-        return count_params(make_interleaved(input_dim, h, bottleneck, int(n)))
-
-    lo, hi = 1, max_n
-    for _ in range(30):
-        mid = int((lo + hi) // 2)
-        if _p(mid) < target_params:
-            lo = mid + 1
-        else:
-            hi = mid
-
-    p_lo, p_hi = _p(lo), _p(hi)
-    n = lo if abs(p_lo - target_params) <= abs(p_hi - target_params) else hi
-    n = max(1, min(n, max_n))
     h = max(1, int(round(input_dim * b_val)))
-    return n, h, _p(n)
+    return _binary_search_n(
+        lambda n: make_interleaved(input_dim, h, bottleneck, n),
+        target_params, h, lo=1, hi=max_n)
 
 
 def solve_d_for_n(n: int, target_params: int, D: int, B: int,
@@ -311,9 +278,8 @@ def resolve_architecture(vary_value, vary_name: str,
             raise ValueError(
                 f'vary={vary_name} needs either n= or b= in fixed')
 
-    seq_len = mc.seq_len
-    input_dim = seq_len * UNICODE_BITS
-    bottleneck = mc.bottleneck if mc.bottleneck is not None else seq_len
+    input_dim = mc.seq_len * UNICODE_BITS
+    bottleneck = mc.bottleneck if mc.bottleneck is not None else mc.seq_len
     shape = getattr(mc, 'shape', 'rectangular')
 
     fixed = dict(sc.fixed)
@@ -322,129 +288,102 @@ def resolve_architecture(vary_value, vary_name: str,
     b_val = fixed.get('b', None)
     budget = sc.budget
 
-    # ── Trapezoid shape ──
     if shape == 'trapezoid':
-        alpha = getattr(mc, 'trapezoid_alpha', 0.1)
-        if sc.solve == 'b':
-            assert n is not None, "need fixed n when solve=b"
-            b_val, hidden_dim, n_params = solve_b_for_n_trapezoid(
-                n, budget, input_dim, bottleneck, alpha)
-        elif sc.solve == 'n':
-            raise NotImplementedError(
-                "solve=n not supported for trapezoid shape")
-        elif n is not None and b_val is not None:
-            hidden_dim = max(1, int(round(input_dim * b_val)))
-            n_params = count_params(
-                make_trapezoid(input_dim, hidden_dim, bottleneck, n, alpha))
-        else:
-            raise ValueError(
-                "Trapezoid shape needs solve=b with n, or n+b fixed")
-
-        sizes = make_trapezoid(input_dim, hidden_dim, bottleneck, n, alpha)
-        n_params = count_params(sizes)
-        return {
-            'sizes': sizes,
-            'b': round(hidden_dim / input_dim, 6) if b_val is None else b_val,
-            'n': n, 'hidden_dim': hidden_dim, 'n_params': n_params,
-        }
-
-    # ── Pyramid shape ──
+        return _resolve_trapezoid(mc, sc, input_dim, bottleneck, n, b_val, budget)
     if shape == 'pyramid':
-        if sc.solve == 'b':
-            assert n is not None, "need fixed n when solve=b"
-            d, h_start, n_params = solve_d_for_n(
-                n, budget, input_dim, bottleneck)
-            sizes = make_pyramid(input_dim, bottleneck, n, d)
-            return {
-                'sizes': sizes, 'b': round(h_start / input_dim, 6),
-                'n': n, 'hidden_dim': h_start, 'n_params': n_params,
-            }
-        elif sc.solve == 'n':
-            raise NotImplementedError(
-                "solve=n not supported for pyramid shape")
-        elif n is not None and b_val is not None:
-            h_start = int(input_dim * b_val)
-            d = h_start - bottleneck
-            sizes = make_pyramid(input_dim, bottleneck, n, d)
-            return {
-                'sizes': sizes, 'b': b_val, 'n': n,
-                'hidden_dim': h_start, 'n_params': count_params(sizes),
-            }
-        else:
-            raise ValueError(
-                "Pyramid shape needs solve=b with n, or n+b fixed")
-
-    # ── Interleaved shape ──
+        return _resolve_pyramid(mc, sc, input_dim, bottleneck, n, b_val, budget)
     if shape == 'interleaved':
-        if sc.solve == 'b':
-            assert n is not None, "need fixed n when solve=b"
-            b_val, hidden_dim, n_params = solve_b_for_n_interleaved(
-                n, budget, input_dim, bottleneck)
-        elif sc.solve == 'n':
-            assert b_val is not None, "need fixed b when solve=n"
-            n, hidden_dim, n_params = solve_n_for_b_interleaved(
-                b_val, budget, input_dim, bottleneck)
-        elif n is not None and b_val is not None:
-            hidden_dim = max(1, int(round(input_dim * b_val)))
-            n_params = count_params(
-                make_interleaved(input_dim, hidden_dim, bottleneck, n))
-        elif n is not None:
-            raise ValueError(
-                f"n={n} given but no solve/b — cannot determine hidden_dim")
-        elif b_val is not None:
-            hidden_dim = max(1, int(round(input_dim * b_val)))
-            if budget is not None:
-                n, _, _ = solve_n_for_b_interleaved(
-                    b_val, budget, input_dim, bottleneck)
-            else:
-                n = 1
-            n_params = count_params(
-                make_interleaved(input_dim, hidden_dim, bottleneck, n))
-        else:
-            raise ValueError(
-                "Interleaved shape needs n+b, or solve+fixed")
+        return _resolve_interleaved(mc, sc, input_dim, bottleneck, n, b_val, budget)
+    return _resolve_rectangular(sc, input_dim, bottleneck, n, b_val, budget)
 
-        sizes = make_interleaved(input_dim, hidden_dim, bottleneck, n)
-        n_params = count_params(sizes)
-        return {
-            'sizes': sizes,
-            'b': round(hidden_dim / input_dim, 6) if b_val is None else b_val,
-            'n': n, 'hidden_dim': hidden_dim, 'n_params': n_params,
-        }
 
-    # ── Rectangular shape ──
+def _resolve_trapezoid(mc, sc, input_dim, bottleneck, n, b_val, budget) -> dict:
+    alpha = getattr(mc, 'trapezoid_alpha', 0.1)
     if sc.solve == 'b':
         assert n is not None, "need fixed n when solve=b"
-        b_val, hidden_dim, n_params = solve_b_for_n(
+        b_val, hidden_dim, _ = solve_b_for_n_trapezoid(
+            n, budget, input_dim, bottleneck, alpha)
+    elif sc.solve == 'n':
+        raise NotImplementedError("solve=n not supported for trapezoid shape")
+    elif n is not None and b_val is not None:
+        hidden_dim = max(1, int(round(input_dim * b_val)))
+    else:
+        raise ValueError("Trapezoid shape needs solve=b with n, or n+b fixed")
+
+    sizes = make_trapezoid(input_dim, hidden_dim, bottleneck, n, alpha)
+    return _format_result(sizes, b_val, n, hidden_dim, input_dim)
+
+
+def _resolve_pyramid(mc, sc, input_dim, bottleneck, n, b_val, budget) -> dict:
+    if sc.solve == 'b':
+        assert n is not None, "need fixed n when solve=b"
+        d, h_start, _ = solve_d_for_n(n, budget, input_dim, bottleneck)
+        sizes = make_pyramid(input_dim, bottleneck, n, d)
+        return _format_result(sizes, round(h_start / input_dim, 6), n, h_start, input_dim)
+    if sc.solve == 'n':
+        raise NotImplementedError("solve=n not supported for pyramid shape")
+    if n is not None and b_val is not None:
+        h_start = int(input_dim * b_val)
+        d = h_start - bottleneck
+        sizes = make_pyramid(input_dim, bottleneck, n, d)
+        return _format_result(sizes, b_val, n, h_start, input_dim)
+    raise ValueError("Pyramid shape needs solve=b with n, or n+b fixed")
+
+
+def _resolve_interleaved(mc, sc, input_dim, bottleneck, n, b_val, budget) -> dict:
+    if sc.solve == 'b':
+        assert n is not None, "need fixed n when solve=b"
+        b_val, hidden_dim, _ = solve_b_for_n_interleaved(
             n, budget, input_dim, bottleneck)
     elif sc.solve == 'n':
         assert b_val is not None, "need fixed b when solve=n"
-        n, hidden_dim, n_params = solve_n_for_b(
+        n, hidden_dim, _ = solve_n_for_b_interleaved(
             b_val, budget, input_dim, bottleneck)
     elif n is not None and b_val is not None:
         hidden_dim = max(1, int(round(input_dim * b_val)))
-        n_params = count_params(
-            make_rectangular(input_dim, hidden_dim, bottleneck, n))
     elif n is not None:
-        raise ValueError(
-            f"n={n} given but no solve/b — cannot determine hidden_dim")
+        raise ValueError(f"n={n} given but no solve/b — cannot determine hidden_dim")
     elif b_val is not None:
         hidden_dim = max(1, int(round(input_dim * b_val)))
         if budget is not None:
-            n, _, _ = solve_n_for_b(
-                b_val, budget, input_dim, bottleneck)
+            n, _, _ = solve_n_for_b_interleaved(b_val, budget, input_dim, bottleneck)
         else:
             n = 1
-        n_params = count_params(
-            make_rectangular(input_dim, hidden_dim, bottleneck, n))
     else:
-        raise ValueError(
-            "Cannot determine architecture: need n+b, or solve+fixed")
+        raise ValueError("Interleaved shape needs n+b, or solve+fixed")
+
+    sizes = make_interleaved(input_dim, hidden_dim, bottleneck, n)
+    return _format_result(sizes, b_val, n, hidden_dim, input_dim)
+
+
+def _resolve_rectangular(sc, input_dim, bottleneck, n, b_val, budget) -> dict:
+    if sc.solve == 'b':
+        assert n is not None, "need fixed n when solve=b"
+        b_val, hidden_dim, _ = solve_b_for_n(n, budget, input_dim, bottleneck)
+    elif sc.solve == 'n':
+        assert b_val is not None, "need fixed b when solve=n"
+        n, hidden_dim, _ = solve_n_for_b(b_val, budget, input_dim, bottleneck)
+    elif n is not None and b_val is not None:
+        hidden_dim = max(1, int(round(input_dim * b_val)))
+    elif n is not None:
+        raise ValueError(f"n={n} given but no solve/b — cannot determine hidden_dim")
+    elif b_val is not None:
+        hidden_dim = max(1, int(round(input_dim * b_val)))
+        if budget is not None:
+            n, _, _ = solve_n_for_b(b_val, budget, input_dim, bottleneck)
+        else:
+            n = 1
+    else:
+        raise ValueError("Cannot determine architecture: need n+b, or solve+fixed")
 
     sizes = make_rectangular(input_dim, hidden_dim, bottleneck, n)
-    n_params = count_params(sizes)
+    return _format_result(sizes, b_val, n, hidden_dim, input_dim)
+
+
+def _format_result(sizes, b_val, n, hidden_dim, input_dim) -> dict:
     return {
         'sizes': sizes,
         'b': round(hidden_dim / input_dim, 6) if b_val is None else b_val,
-        'n': n, 'hidden_dim': hidden_dim, 'n_params': n_params,
+        'n': n, 'hidden_dim': hidden_dim,
+        'n_params': count_params(sizes),
     }

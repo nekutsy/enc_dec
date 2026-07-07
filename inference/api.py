@@ -44,7 +44,7 @@ class ModelInference:
         z = torch.from_numpy(latent).float().unsqueeze(0).to(self.device)
         with torch.inference_mode():
             out_logits = self.model.decode(z).squeeze(0).cpu().numpy()
-        out_bits = torch.sigmoid(torch.from_numpy(out_logits)).numpy()
+        out_bits = 1.0 / (1.0 + np.exp(-out_logits))
         return _bits_to_chars(out_bits)
 
     def reconstruct(self, text: str) -> tuple[str, int, float]:
@@ -56,7 +56,7 @@ class ModelInference:
         inp, padded = self._text_to_tensor(text)
         with torch.inference_mode():
             out_logits = self.model(inp).squeeze(0).cpu().numpy()
-        out_bits = torch.sigmoid(torch.from_numpy(out_logits)).numpy()
+        out_bits = 1.0 / (1.0 + np.exp(-out_logits))
         rec = _bits_to_chars(out_bits)
         errors = sum(1 for a, b in zip(padded, rec) if a != b)
         codes = np.array([ord(ch) if ch != '\0' else 0 for ch in padded],
