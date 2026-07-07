@@ -28,11 +28,11 @@ def read_csv(csv_path):
     return data
 
 
-def plot_run(run_id, csv_path, meta_path, out_dir):
+def plot_run(run_name, csv_path, meta_path, out_dir):
     data = read_csv(csv_path)
 
     # Load meta info
-    label = run_id
+    label = run_name
     noise = '?'
     if meta_path.exists():
         import json
@@ -40,7 +40,13 @@ def plot_run(run_id, csv_path, meta_path, out_dir):
             meta = json.load(f)
         tc = meta.get('train_config', {})
         noise = tc.get('noise_prob', '?')
-        label = f'{run_id[:6]} (noise={noise})'
+        mn = meta.get('model_name', '')
+        if mn:
+            label = mn
+        elif len(run_name) > 12:
+            label = run_name[13:]  # strip hash-
+        else:
+            label = run_name[:6]
 
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
     fig.suptitle(f'{label}', fontsize=12, fontweight='bold')
@@ -71,7 +77,8 @@ def plot_run(run_id, csv_path, meta_path, out_dir):
                     va='center')
 
     plt.tight_layout()
-    out_path = out_dir / f'{run_id[:6]}.png'
+    short_id = run_name[:12] if len(run_name) >= 12 else run_name
+    out_path = out_dir / f'{short_id[:6]}.png'
     os.makedirs(out_dir, exist_ok=True)
     fig.savefig(out_path, dpi=150, bbox_inches='tight')
     plt.close(fig)
@@ -88,11 +95,14 @@ def main():
     runs = sorted(os.listdir(RUNS_DIR))
     print(f'Plotting {len(runs)} runs:\n')
 
-    for run_id in runs:
-        csv_path = RUNS_DIR / run_id / 'log.csv'
-        meta_path = RUNS_DIR / run_id / 'meta.json'
+    for run_name in runs:
+        run_dir = RUNS_DIR / run_name
+        if not run_dir.is_dir() or run_dir.is_symlink():
+            continue
+        csv_path = run_dir / 'log.csv'
+        meta_path = run_dir / 'meta.json'
         if csv_path.exists():
-            plot_run(run_id, csv_path, meta_path, out_dir)
+            plot_run(run_name, csv_path, meta_path, out_dir)
 
     print(f'\nDone. Plots in: {out_dir}')
 

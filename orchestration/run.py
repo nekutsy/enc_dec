@@ -64,7 +64,7 @@ class Run:
 
     def __init__(self, run_id: str, arch: dict, mc, tc,
                  registry: Registry, workspace: Workspace,
-                 exp_name: str = ''):
+                 exp_name: str = '', model_name: str = ''):
         self.run_id = run_id
         self.arch = arch
         self.mc = mc
@@ -72,6 +72,7 @@ class Run:
         self.registry = registry
         self.ws = workspace
         self.exp_name = exp_name
+        self.model_name = model_name
 
     # ── Factory: find existing or create ───────────────────
 
@@ -98,7 +99,8 @@ class Run:
         # Check for completed run with enough samples
         done = registry.get_completed_run(fp, th, min_samples=tc.target_samples)
         if done:
-            run = cls(done['id'], arch, mc, tc, registry, workspace, exp_name)
+            model_name = done.get('model_name', '')
+            run = cls(done['id'], arch, mc, tc, registry, workspace, exp_name, model_name)
             return run, False  # exists, fully done
 
         # Find existing (possibly partial) run or create new
@@ -108,8 +110,8 @@ class Run:
             _json.dumps(mc.to_dict() if hasattr(mc, 'to_dict') else mc),
             _json.dumps(tc.to_dict() if hasattr(tc, 'to_dict') else tc),
         )
-        workspace.write_meta(run_id, arch, mc, tc, exp_name)
-        run = cls(run_id, arch, mc, tc, registry, workspace, exp_name)
+        workspace.write_meta(run_id, arch, mc, tc, exp_name, model_name)
+        run = cls(run_id, arch, mc, tc, registry, workspace, exp_name, model_name)
         return run, created
 
     @staticmethod
@@ -141,10 +143,10 @@ class Run:
         bs = self.tc.batch_size
         target_samples = self.tc.target_samples
 
-        model_path = str(self.ws.model_path(self.run_id))
-        best_path = str(self.ws.best_path(self.run_id))
-        csv_path = str(self.ws.log_csv_path(self.run_id))
-        model_dir = str(self.ws.run_dir(self.run_id))
+        model_path = str(self.ws.model_path(self.run_id, self.model_name))
+        best_path = str(self.ws.best_path(self.run_id, self.model_name))
+        csv_path = str(self.ws.log_csv_path(self.run_id, self.model_name))
+        model_dir = str(self.ws.run_dir(self.run_id, self.model_name))
 
         arch_str = '→'.join(str(s) for s in sizes)
         print(f'  run: {self.run_id}')
@@ -157,7 +159,7 @@ class Run:
             if last_samples >= target_samples:
                 result = self._read_result_from_csv(csv_path, last_samples)
                 self.registry.finish_run(self.run_id, result)
-                self.ws.write_result(self.run_id, result)
+                self.ws.write_result(self.run_id, result, self.model_name)
                 return result
 
         # ── Data ──
@@ -184,7 +186,7 @@ class Run:
             cuda_safe_cleanup()
             result = RunResult(status='oom')
             self.registry.finish_run(self.run_id, result)
-            self.ws.write_result(self.run_id, result)
+            self.ws.write_result(self.run_id, result, self.model_name)
             return result
 
         try:
@@ -196,7 +198,7 @@ class Run:
             cuda_safe_cleanup()
             result = RunResult(status='oom')
             self.registry.finish_run(self.run_id, result)
-            self.ws.write_result(self.run_id, result)
+            self.ws.write_result(self.run_id, result, self.model_name)
             return result
 
         # ── Optimizer ──
@@ -217,8 +219,8 @@ class Run:
 
         # ── Logger ──
         lc = log_config or LoggerConfig.full()
-        train_logger = TrainingLogger(csv_path, config=lc, model_name=self.run_id,
-                                       log_path=str(self.ws.log_txt_path(self.run_id)))
+        train_logger = TrainingLogger(csv_path, config=lc, model_name=self.model_name,
+                                       log_path=str(self.ws.log_txt_path(self.run_id, self.model_name)))
 
         header_lines = [
             f'run: {self.run_id}',
@@ -233,7 +235,7 @@ class Run:
         if rem <= 0:
             result = self._read_result_from_csv(csv_path, start_samples)
             self.registry.finish_run(self.run_id, result)
-            self.ws.write_result(self.run_id, result)
+            self.ws.write_result(self.run_id, result, self.model_name)
             return result
 
         print(f'  training {rem:,} samples...')
@@ -289,7 +291,7 @@ class Run:
             cuda_safe_cleanup()
 
         self.registry.finish_run(self.run_id, result)
-        self.ws.write_result(self.run_id, result)
+        self.ws.write_result(self.run_id, result, self.model_name)
         return result
 
     # ── Internal helpers ───────────────────────────────────

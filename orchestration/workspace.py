@@ -22,44 +22,76 @@ from pathlib import Path
 
 
 class Workspace:
-    """Deterministic file paths for registry-based runs."""
+    """Deterministic file paths for registry-based runs.
+
+    Run directories use human-readable naming:
+      sessions/runs/{run_id}-{model_name}/   (new)
+      sessions/runs/{run_id}/                (old, backward-compat)
+
+    model_name defaults to '' — plain run_id dir is used for backward compat.
+    _find_run_dir handles lookup: exact match → prefix scan → create.
+    """
 
     def __init__(self, root: str = 'sessions'):
         self.root = Path(root)
 
     # ── Run paths ──────────────────────────────────────────
 
-    def run_dir(self, run_id: str) -> Path:
-        d = self.root / 'runs' / run_id
+    def run_dir(self, run_id: str, model_name: str = '') -> Path:
+        existing = self._find_run_dir(run_id)
+        if existing is not None:
+            return existing
+        name = f"{run_id}-{model_name}" if model_name else run_id
+        d = self.root / 'runs' / name
         os.makedirs(d, exist_ok=True)
         return d
 
-    def model_path(self, run_id: str) -> Path:
-        return self.run_dir(run_id) / 'model.pth'
+    def _find_run_dir(self, run_id: str) -> Path | None:
+        """Look up existing run directory by run_id prefix.
 
-    def best_path(self, run_id: str) -> Path:
-        return self.run_dir(run_id) / 'best.pth'
+        Checks {run_id}-* prefix first (new human-readable format), then
+        falls back to exact match (old plain-hash format or backward-compat symlink).
+        """
+        runs_root = self.root / 'runs'
+        if not runs_root.is_dir():
+            return None
+        # Prefer human-readable format: {run_id}-{model_name}
+        prefix = f"{run_id}-"
+        for entry in runs_root.iterdir():
+            if entry.is_dir() and entry.name.startswith(prefix):
+                return entry
+        # Fallback: plain run_id (old format or symlink)
+        exact = runs_root / run_id
+        if exact.is_dir():
+            return exact
+        return None
 
-    def optimizer_path(self, run_id: str) -> Path:
-        return self.run_dir(run_id) / 'model.opt'
+    def model_path(self, run_id: str, model_name: str = '') -> Path:
+        return self.run_dir(run_id, model_name) / 'model.pth'
 
-    def scheduler_path(self, run_id: str) -> Path:
-        return self.run_dir(run_id) / 'model.sch'
+    def best_path(self, run_id: str, model_name: str = '') -> Path:
+        return self.run_dir(run_id, model_name) / 'best.pth'
 
-    def step_scheduler_path(self, run_id: str) -> Path:
-        return self.run_dir(run_id) / 'model.step_sch'
+    def optimizer_path(self, run_id: str, model_name: str = '') -> Path:
+        return self.run_dir(run_id, model_name) / 'model.opt'
 
-    def log_csv_path(self, run_id: str) -> Path:
-        return self.run_dir(run_id) / 'log.csv'
+    def scheduler_path(self, run_id: str, model_name: str = '') -> Path:
+        return self.run_dir(run_id, model_name) / 'model.sch'
 
-    def log_txt_path(self, run_id: str) -> Path:
-        return self.run_dir(run_id) / 'train.log'
+    def step_scheduler_path(self, run_id: str, model_name: str = '') -> Path:
+        return self.run_dir(run_id, model_name) / 'model.step_sch'
 
-    def meta_path(self, run_id: str) -> Path:
-        return self.run_dir(run_id) / 'meta.json'
+    def log_csv_path(self, run_id: str, model_name: str = '') -> Path:
+        return self.run_dir(run_id, model_name) / 'log.csv'
 
-    def result_path(self, run_id: str) -> Path:
-        return self.run_dir(run_id) / 'result.json'
+    def log_txt_path(self, run_id: str, model_name: str = '') -> Path:
+        return self.run_dir(run_id, model_name) / 'train.log'
+
+    def meta_path(self, run_id: str, model_name: str = '') -> Path:
+        return self.run_dir(run_id, model_name) / 'meta.json'
+
+    def result_path(self, run_id: str, model_name: str = '') -> Path:
+        return self.run_dir(run_id, model_name) / 'result.json'
 
     # ── Experiment paths ───────────────────────────────────
 
@@ -76,12 +108,14 @@ class Workspace:
 
     # ── Metadata writers ───────────────────────────────────
 
-    def write_meta(self, run_id: str, arch: dict, mc, tc, exp_name: str = '') -> Path:
+    def write_meta(self, run_id: str, arch: dict, mc, tc, exp_name: str = '',
+                   model_name: str = '') -> Path:
         """Write meta.json for a run. Returns the path."""
-        path = self.meta_path(run_id)
+        path = self.meta_path(run_id, model_name)
         meta = {
             'run_id': run_id,
             'experiment': exp_name,
+            'model_name': model_name,
             'layer_sizes': arch.get('sizes', []),
             'n_params': arch.get('n_params', 0),
             'model_config': asdict(mc) if hasattr(mc, '__dataclass_fields__') else mc,
@@ -91,9 +125,10 @@ class Workspace:
             json.dump(meta, f, indent=2, ensure_ascii=False)
         return path
 
-    def write_result(self, run_id: str, result) -> Path:
+    def write_result(self, run_id: str, result,
+                     model_name: str = '') -> Path:
         """Write result.json after run completion."""
-        path = self.result_path(run_id)
+        path = self.result_path(run_id, model_name)
         d = asdict(result) if hasattr(result, '__dataclass_fields__') else vars(result)
         with open(path, 'w') as f:
             json.dump(d, f, indent=2, ensure_ascii=False)

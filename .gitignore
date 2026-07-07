@@ -1,8 +1,13 @@
 sessions/runs/
 sessions/experiments/
+sessions/registry.db
+sessions/plots/
+sessions/_ad_hoc_artifacts/
 data/cache/
 __pycache__
 *.pyc
 *.pth
 *.opt
 *.sch
+*.log
+*.csv

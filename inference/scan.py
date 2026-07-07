@@ -31,6 +31,9 @@ def scan_models(sessions_dir: str = 'sessions') -> list[
             run_path = os.path.join(runs_dir, run_id)
             if not os.path.isdir(run_path):
                 continue
+            # Skip backward-compat symlinks (plain-hash → hash-model_name)
+            if os.path.islink(run_path):
+                continue
 
             # Prefer best.pth, fallback to model.pth
             pth_file = None
@@ -67,11 +70,14 @@ def _parse_new_format(pth_file: str, run_path: str) -> tuple[list[int], str]:
                 meta = json.load(f)
                 sizes = meta.get('layer_sizes', [])
                 exp = meta.get('experiment', '')
-                model_cfg = meta.get('model_config', {})
-                shape = model_cfg.get('shape', 'rect')[:4]
-                seq_len = model_cfg.get('seq_len', '?')
-                if exp:
-                    label = f"{exp}/{os.path.basename(run_path)[:8]}"
+                model_name = meta.get('model_name', '')
+                if model_name and exp:
+                    label = f'{exp}/{model_name}'
+                elif model_name:
+                    label = model_name
+                elif exp:
+                    run_id = meta.get('run_id', '')[:6]
+                    label = f'{exp}/{run_id}'
         except (json.JSONDecodeError, KeyError):
             pass
 
