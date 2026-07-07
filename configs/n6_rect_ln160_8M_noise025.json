@@ -18,7 +18,7 @@
     "grad_clip": 1.0,
     "scheduler": "greedy_simple",
     "warmup_fraction": 0.02,
-    "optimizer": "adamw",
+    "optimizer": "adamw_fused",
     "weight_decay": 0.0,
     "decay_linear_only": true,
     "early_stop_patience": 999,
