@@ -9,17 +9,22 @@ from utils import cuda_safe_cleanup as _cuda_safe_cleanup
 
 
 def save_checkpoint(model, optimizer, model_path: str,
-                    checkpoint_scheduler=None, step_scheduler=None):
+                    checkpoint_scheduler=None, step_scheduler=None,
+                    save_optimizer=True):
     """Save model weights + optimizer state atomically.
 
     Handles compiled models (_orig_mod unwrapping).
     Side effect: syncs CUDA before save.
     Optionally saves scheduler state (checkpoint_scheduler → .sch,
     step_scheduler → .step_sch).
+    When save_optimizer=False, skips optimizer and scheduler states
+    (best checkpoint — inference-only, no resume needed).
     """
     _cuda_safe_cleanup()
     unwrapped = model._orig_mod if hasattr(model, '_orig_mod') else model
     torch.save(unwrapped.state_dict(), model_path)
+    if not save_optimizer:
+        return
     opt_path = model_path + ".opt"
     torch.save(optimizer.state_dict(), opt_path)
     if checkpoint_scheduler is not None:

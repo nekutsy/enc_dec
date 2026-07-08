@@ -192,12 +192,17 @@ def run_training(start_samples: int, max_samples: int, model, optimizer, criteri
                             checkpoint_scheduler.step(avg_val_loss)
 
                         # Early-stopping + best model (always on val loss)
+                        # Skip best save when model will be saved on the same step
+                        # (identical weights, only wastes disk space).
                         if avg_val_loss is not None and avg_val_loss < best_val_loss:
                             best_val_loss = avg_val_loss
                             stale_checkpoints = 0
-                            save_checkpoint(model, optimizer, best_model_path,
-                                            checkpoint_scheduler=checkpoint_scheduler,
-                                            step_scheduler=step_scheduler)
+                            same_step = (total_samples >= next_checkpoint)
+                            if not same_step:
+                                save_checkpoint(model, optimizer, best_model_path,
+                                                checkpoint_scheduler=checkpoint_scheduler,
+                                                step_scheduler=step_scheduler,
+                                                save_optimizer=False)
                         elif checkpoint_scheduler is not None and hasattr(checkpoint_scheduler, 'is_exploring') and checkpoint_scheduler.is_exploring():
                             pass
                         elif avg_val_loss is not None:
