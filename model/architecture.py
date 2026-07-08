@@ -244,7 +244,7 @@ def solve_d_for_n(n: int, target_params: int, D: int, B: int,
 
 MODEL_LEVEL_VARY = {'normalization', 'activation', 'dropout',
                     'norm_bottleneck', 'norm_last', 'bottleneck',
-                    'trapezoid_alpha'}
+                    'trapezoid_alpha', 'residual', 'residual_norm'}
 TRAIN_LEVEL_VARY = {'lr', 'scheduler', 'grad_clip', 'optimizer',
                     'weight_decay', 'batch_size', 'num_workers',
                     'noise_prob', 'noise_std'}

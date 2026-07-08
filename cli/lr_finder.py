@@ -227,6 +227,7 @@ def run_lr_find_for_sweep(
 
         model = Autoencoder(
             sizes, activation=mc.activation,
+            normalization=mc.normalization,
             norm_bottleneck=mc.norm_bottleneck,
             norm_last=mc.norm_last,
             dropout=mc.dropout,

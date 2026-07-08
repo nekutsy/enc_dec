@@ -118,7 +118,7 @@ def main(argv: list[str] | None = None):
     # ── Model ──
     model = Autoencoder(
         sizes, activation=args.activation, normalization=args.normalization,
-        init_gain=1.0, dropout=0.0,
+        init_gain=1.0, dropout=0.0, residual=False,
     ).to(device)
 
     tc = TrainConfig(

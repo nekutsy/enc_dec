@@ -32,6 +32,8 @@ class ModelConfig:
     dropout: float = 0.0
     norm_bottleneck: bool = False      # norm on bottleneck layer
     norm_last: bool = False            # norm on final decoder layer
+    residual: bool = False             # classic residual: f(x) + x where dims match
+    residual_norm: str = 'post'        # 'post' | 'pre' — norm placement in residual blocks
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -163,6 +165,10 @@ class SweepConfig:
         sweep_data = data.get('sweep', {})
         output_data = data.get('output', {})
 
+            # backward compat: old configs had no residual field
+        model_data.setdefault('residual', False)
+        # backward compat: old configs had no residual_norm field
+        model_data.setdefault('residual_norm', 'post')
         # backward compat: old configs use target_symbols
         if 'target_symbols' in training_data and 'target_samples' not in training_data:
             training_data['target_samples'] = training_data.pop('target_symbols')

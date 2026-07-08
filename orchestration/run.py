@@ -122,6 +122,10 @@ class Run:
         parts.append(f'n{arch.get("n", arch.get("n_hidden", "?"))}')
         if arch.get('b') is not None:
             parts.append(f'b{arch["b"]:.4g}')
+        if getattr(mc, 'residual', False):
+            rn = getattr(mc, 'residual_norm', 'post')
+            tag = 'res_pre' if rn == 'pre' else 'res_post'
+            parts.append(tag)
         return '_'.join(parts)
 
     # ── Execution ─────────────────────────────────────────
@@ -175,6 +179,7 @@ class Run:
                 norm_bottleneck=self.mc.norm_bottleneck,
                 norm_last=self.mc.norm_last,
                 dropout=self.mc.dropout,
+                residual=self.mc.residual, residual_norm=self.mc.residual_norm,
             ).to(device)
         except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
             if isinstance(e, RuntimeError) and 'out of memory' not in str(e).lower():

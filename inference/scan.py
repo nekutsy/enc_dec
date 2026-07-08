@@ -209,7 +209,7 @@ def load_model(path: str, sizes: list[int], device: str | None = None):
             # New format: model_config is nested
             model_cfg = meta.get('model_config', meta)
             for k in ('activation', 'normalization', 'init_gain', 'dropout',
-                      'norm_bottleneck', 'norm_last'):
+                      'norm_bottleneck', 'norm_last', 'residual', 'residual_norm'):
                 if k in model_cfg:
                     kwargs[k] = model_cfg[k]
             break

@@ -147,7 +147,9 @@ def build_parser():
     # lr-find — LR range test sweep
     lp = sub.add_parser('lr-find', help='Run LR range test across architecture variants')
     lp.add_argument('--vary', required=True, help='e.g. n=2,3,4,5 or b=0.5,1,2,4,8')
-    lp.add_argument('--fixed', nargs='+', default=[],
+    lp.add_argument('--solve', default='b', choices=['b', 'n'],
+                    help='Solve for the other dim (default: b when varying n)')
+    lp.add_argument('--fixed', nargs='+', default=[],,
                     help='Fixed params: n=2 b=2.0')
     lp.add_argument('--seq-len', type=int, default=32)
     lp.add_argument('--bottleneck', type=int, default=None)
@@ -165,6 +167,9 @@ def build_parser():
     lp.add_argument('--device', default='auto')
     lp.add_argument('--no-plot', action='store_true', default=False)
     lp.add_argument('--residual', action='store_true', default=False)
+    lp.add_argument('--residual-norm', default='post', choices=['post', 'pre'])
+    lp.add_argument('--normalization', default='layernorm',
+                    choices=['layernorm', 'rmsnorm', 'batchnorm', 'none'])
 
     return parser
 
@@ -205,10 +210,6 @@ def main():
 
     sweep = Sweep(cfg)
     sweep.run()
-
-
-if __name__ == '__main__':
-    main()
 
 
 # ── LR Find Sweep ────────────────────────────────────────────
@@ -260,11 +261,14 @@ def _run_lr_find_sweep(args):
                 seq_len=args.seq_len,
                 bottleneck=bottleneck,
                 activation=args.activation,
+                normalization=args.normalization,
                 shape=args.shape,
                 residual=args.residual,
+                residual_norm=args.residual_norm,
             ),
             training=TrainConfig(batch_size=args.batch_size),
-            sweep=SweepSpec(vary=vary_name, values=[v], fixed=fixed, budget=budget),
+            sweep=SweepSpec(vary=vary_name, values=[v], fixed=fixed, budget=budget,
+                             solve=args.solve),
         )
 
         arch = resolve_architecture(v, vary_name, cfg)
@@ -298,3 +302,7 @@ def _run_lr_find_sweep(args):
 
     print(f'{"=" * 55}')
     print(f'Plots saved to {args.output}/')
+
+
+if __name__ == '__main__':
+    main()
