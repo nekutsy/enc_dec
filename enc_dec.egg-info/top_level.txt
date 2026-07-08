@@ -1,9 +1,0 @@
-cli
-core
-encoding
-experiment
-inference
-model
-orchestration
-registry
-training
