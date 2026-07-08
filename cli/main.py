@@ -14,6 +14,7 @@ Usage:
 
   enc-dec infer [--gpu]       Interactive inference REPL
   enc-dec overfit [opts]      Overfit test (debug architecture)
+  enc-dec lr-find [opts]      LR range test
 
   enc-dec plot runs           Plot all runs in sessions/runs/
   enc-dec plot noise LABEL1 ID1 LABEL2 ID2   Compare two noise levels
@@ -44,6 +45,8 @@ def main():
         _run_infer(sys.argv[2:])
     elif cmd == 'overfit':
         _run_overfit(sys.argv[2:])
+    elif cmd == 'lr-find':
+        _run_lr_find(sys.argv[2:])
     elif cmd == 'plot':
         _run_plot(sys.argv[2:])
     elif cmd == 'resume':
@@ -91,6 +94,12 @@ def _run_overfit(argv):
     sys.argv = ['enc-dec overfit'] + argv
     import cli.overfit_test
     cli.overfit_test.main()
+
+
+def _run_lr_find(argv):
+    sys.argv = ['enc-dec lr-find'] + argv
+    import cli.lr_finder
+    cli.lr_finder.main()
 
 
 def _run_plot(argv):

@@ -6,6 +6,7 @@ Usage:
   python cli/sweep.py run --config configs/noise_sweep.json
   python cli/sweep.py grid --vary n=2,4,6,8,10 --solve b --budget 40M
   python cli/sweep.py binary --vary n --range 2 16 --solve b --budget 40M
+  python cli/sweep.py lr-find [opts]
 """
 
 import argparse
@@ -143,6 +144,28 @@ def build_parser():
     bp.add_argument('--device', default='auto')
     bp.add_argument('--batch-size', type=int, default=None)
 
+    # lr-find — LR range test sweep
+    lp = sub.add_parser('lr-find', help='Run LR range test across architecture variants')
+    lp.add_argument('--vary', required=True, help='e.g. n=2,3,4,5 or b=0.5,1,2,4,8')
+    lp.add_argument('--fixed', nargs='+', default=[],
+                    help='Fixed params: n=2 b=2.0')
+    lp.add_argument('--seq-len', type=int, default=32)
+    lp.add_argument('--bottleneck', type=int, default=None)
+    lp.add_argument('--shape', default='rectangular',
+                    choices=['rectangular', 'pyramid', 'interleaved', 'trapezoid'])
+    lp.add_argument('--activation', default='silu')
+    lp.add_argument('--budget', type=str, default=None)
+    lp.add_argument('--batch-size', type=int, default=256)
+    lp.add_argument('--steps', type=int, default=200)
+    lp.add_argument('--lr-start', type=float, default=1e-7)
+    lp.add_argument('--lr-end', type=float, default=10.0)
+    lp.add_argument('--lr-ranges', nargs='+', default=None,
+                    help='Multiple LR ranges: 1e-7:1.0 1e-5:10.0')
+    lp.add_argument('--output', default='sessions/lr_find')
+    lp.add_argument('--device', default='auto')
+    lp.add_argument('--no-plot', action='store_true', default=False)
+    lp.add_argument('--residual', action='store_true', default=False)
+
     return parser
 
 
@@ -157,6 +180,10 @@ def main():
             print(f'  override: {path} = {value}')
         sweep = Sweep(cfg)
         sweep.run(no_val=args.no_val)
+        return
+
+    if args.command == 'lr-find':
+        _run_lr_find_sweep(args)
         return
 
     if args.command == 'grid':
@@ -182,3 +209,92 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
+# ── LR Find Sweep ────────────────────────────────────────────
+
+def _run_lr_find_sweep(args):
+    """Run LR range test across architecture variants."""
+    from experiment.context import setup_runtime
+    from model.architecture import resolve_architecture
+    from utils import gpu_health_check
+    from cli.lr_finder import run_lr_find_for_sweep
+
+    if not gpu_health_check():
+        print('\u26a0 GPU not available — check nvidia-smi')
+        sys.exit(1)
+
+    vary_str = args.vary.split('=', 1)
+    vary_name = vary_str[0]
+    vary_values_str = vary_str[1] if len(vary_str) > 1 else ''
+
+    vary_values = []
+    for v in vary_values_str.split(','):
+        try:
+            vary_values.append(int(v) if '.' not in v else float(v))
+        except ValueError:
+            vary_values.append(v)
+
+    budget = _parse_size(args.budget) if args.budget else None
+    bottleneck = args.bottleneck if args.bottleneck is not None else args.seq_len
+
+    print(f'LR Finder Sweep')
+    print(f'  vary: {vary_name} = {",".join(str(v) for v in vary_values)}')
+    print(f'  shape: {args.shape}  seq_len={args.seq_len}')
+    print(f'  lr range: {args.lr_start:.0e} \u2192 {args.lr_end:.1f}  steps={args.steps}')
+    print()
+
+    runtime = setup_runtime(OutputConfig(device=args.device))
+
+    for v in vary_values:
+        fixed = dict(_parse_fixed(args.fixed))
+        fixed[vary_name] = v
+        if 'b' not in fixed:
+            fixed['b'] = 2.0
+        if 'n' not in fixed:
+            fixed['n'] = 2
+
+        cfg = SweepConfig(
+            name='lr_find',
+            model=ModelConfig(
+                seq_len=args.seq_len,
+                bottleneck=bottleneck,
+                activation=args.activation,
+                shape=args.shape,
+                residual=args.residual,
+            ),
+            training=TrainConfig(batch_size=args.batch_size),
+            sweep=SweepSpec(vary=vary_name, values=[v], fixed=fixed, budget=budget),
+        )
+
+        arch = resolve_architecture(v, vary_name, cfg)
+        n_params = arch['n_params']
+        sizes = arch['sizes']
+
+        arch_str = '\u2192'.join(str(s) for s in sizes)
+        model_name = f'{args.shape[:4]}_s{args.seq_len}_n{arch["n"]}_b{arch["b"]:.4g}'
+        if args.residual:
+            model_name += '_res'
+
+        print(f'{"─" * 55}')
+        print(f'[{vary_name}={v}]  arch: {arch_str}  ({n_params:,} params)')
+
+        result = run_lr_find_for_sweep(
+            arch=arch,
+            mc=cfg.model,
+            runtime=runtime,
+            batch_size=args.batch_size,
+            lr_start=args.lr_start,
+            lr_end=args.lr_end,
+            steps=args.steps,
+            output_dir=args.output,
+            model_name=model_name,
+            no_plot=args.no_plot,
+            lr_ranges=args.lr_ranges,
+        )
+
+        cuda_safe_cleanup()
+        print()
+
+    print(f'{"=" * 55}')
+    print(f'Plots saved to {args.output}/')
