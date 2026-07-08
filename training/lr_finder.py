@@ -29,7 +29,7 @@ def find_lr(
     lr_start: float = 1e-7,
     lr_end: float = 10.0,
     steps: int = 200,
-    stop_factor: float = 4.0,
+    stop_factor: float = 10.0,
     smooth_window: int = 5,
 ) -> tuple[float, list[dict]]:
     """Run LR range test.
@@ -46,7 +46,7 @@ def find_lr(
         lr_start: initial learning rate.
         lr_end: final learning rate.
         steps: max number of minibatches to test.
-        stop_factor: stop if loss > stop_factor * min_loss_seen.
+        stop_factor: stop if loss > stop_factor * min_loss_seen (10× default — BCE batch noise doesn't false-trigger).
         smooth_window: moving-average window for suggested LR calculation.
 
     Returns:
