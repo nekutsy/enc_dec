@@ -104,7 +104,7 @@ def main():
         print('GPU not available')
         sys.exit(1)
 
-    runtime = setup_runtime(cfg.output)
+    runtime = setup_runtime(cfg.output, use_tf32=cfg.training.use_tf32)
 
     # ── Resolve architecture ──
     n_val = cfg.sweep.values[0]

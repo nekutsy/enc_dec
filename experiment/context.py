@@ -26,7 +26,8 @@ class RuntimeContext:
 
 
 def setup_runtime(output: OutputConfig,
-                  text: str | None = None) -> RuntimeContext:
+                  text: str | None = None,
+                  use_tf32: bool = True) -> RuntimeContext:
     """Resolve device + load text → RuntimeContext.
 
     Centralised replacement for the 8-line pattern duplicated across scripts.
@@ -38,6 +39,7 @@ def setup_runtime(output: OutputConfig,
 
     if device.type == 'cuda':
         torch.backends.cudnn.benchmark = False
+        torch.backends.cuda.matmul.allow_tf32 = use_tf32
 
     if text is None:
         text = load_text()

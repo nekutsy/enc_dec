@@ -85,6 +85,7 @@ class TrainConfig:
     optimizer: str = 'adamw_fused'     # adamw_fused | adamw | sgd | nag | lion | sophia
     weight_decay: float = 0.01
     decay_linear_only: bool = True     # True → only Linear weights; False → all params
+    use_tf32: bool = True               # enable tf32 matmul on Ampere+ (free ~2-8× speedup)
     noise_prob: float = 0.0              # 0→disabled; fraction of symbols perturbed
     noise_std: float = 3.0               # σ for Gaussian noise on uint21 values
     early_stop_patience: int = 20

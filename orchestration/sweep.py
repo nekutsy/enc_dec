@@ -197,7 +197,7 @@ class Sweep:
         self.ws.write_config(self.exp_name, cfg)
 
         # ── Runtime ──
-        runtime = setup_runtime(cfg.output)
+        runtime = setup_runtime(cfg.output, use_tf32=cfg.training.use_tf32)
 
         print(f'Sweep: {cfg.name}  ({cfg.sweep.strategy} over {cfg.sweep.vary})')
         print(f'  seq_len={cfg.model.seq_len}  target={cfg.training.target_samples // 1e6:.0f}M samples  '
