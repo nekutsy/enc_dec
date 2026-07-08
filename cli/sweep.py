@@ -149,7 +149,7 @@ def build_parser():
     lp.add_argument('--vary', required=True, help='e.g. n=2,3,4,5 or b=0.5,1,2,4,8')
     lp.add_argument('--solve', default='b', choices=['b', 'n'],
                     help='Solve for the other dim (default: b when varying n)')
-    lp.add_argument('--fixed', nargs='+', default=[],,
+    lp.add_argument('--fixed', nargs='+', default=[],
                     help='Fixed params: n=2 b=2.0')
     lp.add_argument('--seq-len', type=int, default=32)
     lp.add_argument('--bottleneck', type=int, default=None)
@@ -242,7 +242,7 @@ def _run_lr_find_sweep(args):
     print(f'LR Finder Sweep')
     print(f'  vary: {vary_name} = {",".join(str(v) for v in vary_values)}')
     print(f'  shape: {args.shape}  seq_len={args.seq_len}')
-    print(f'  lr range: {args.lr_start:.0e} \u2192 {args.lr_end:.1f}  steps={args.steps}')
+    print(f'  lr range: {args.lr_start:.0e} \u2192 {args.lr_end:.2e}  steps={args.steps}')
     print()
 
     runtime = setup_runtime(OutputConfig(device=args.device))
