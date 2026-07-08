@@ -1,0 +1,63 @@
+{
+  "name": "pre_norm_greedy_lr5e5",
+  "model": {
+    "seq_len": 128,
+    "bottleneck": 160,
+    "shape": "rectangular",
+    "activation": "silu",
+    "normalization": "rmsnorm",
+    "init": "orthogonal",
+    "init_gain": 1.0,
+    "dropout": 0.0,
+    "norm_bottleneck": false,
+    "norm_last": false,
+    "residual": true,
+    "residual_norm": "pre"
+  },
+  "training": {
+    "target_samples": 4000000,
+    "batch_size": 256,
+    "lr": 0.00005,
+    "grad_clip": 1.0,
+    "scheduler": "greedy_simple",
+    "warmup_fraction": 0.02,
+    "pct_start": 0.3,
+    "optimizer": "adamw_fused",
+    "weight_decay": 0.01,
+    "decay_linear_only": true,
+    "noise_prob": 0.1,
+    "noise_std": 3.0,
+    "early_stop_patience": 20,
+    "train_ratio": 0.999,
+    "val_interval": 100000,
+    "checkpoint_interval": 1000000,
+    "num_workers": 4,
+    "greedy_factor": 0.5,
+    "greedy_beta": 0.9,
+    "greedy_lock_steps": 3,
+    "greedy_probe_patience": 4,
+    "greedy_probe_factor": 0.5,
+    "greedy_probe_spike_ratio": 2.5,
+    "greedy_probe_lock": 3,
+    "greedy_cooldown": 3,
+    "greedy_simple_min_lr": 1e-06,
+    "greedy_simple_max_lr": 0.4,
+    "greedy_simple_inc": 1.015,
+    "greedy_simple_dec": 0.75,
+    "greedy_simple_patience": 600,
+    "greedy_simple_warmup": 1953,
+    "greedy_simple_warmup_start": 0.1
+  },
+  "sweep": {
+    "strategy": "grid",
+    "vary": "n",
+    "values": [4, 6, 8],
+    "solve": "b",
+    "budget": 384000000
+  },
+  "output": {
+    "workspace": "sessions/sweep_greedy_lr5e5",
+    "sweep_log": "sessions/sweep_greedy_lr5e5_summary.csv",
+    "device": "auto"
+  }
+}

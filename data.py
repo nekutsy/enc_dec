@@ -26,10 +26,24 @@ def load_text(data_dir="data/dataset", verbose=False):
     texts: list[str] = []
     total_chars = 0
     for path in txt_files:
-        with open(path, "r", encoding="utf8") as f:
-            content = f.read()
-            texts.append(content)
-            total_chars += len(content)
+        try:
+            with open(path, "r", encoding="utf8") as f:
+                content = f.read()
+        except UnicodeDecodeError:
+            with open(path, "rb") as f:
+                raw = f.read()
+            for enc in ["windows-1251", "koi8-r", "cp866"]:
+                try:
+                    content = raw.decode(enc)
+                    if verbose:
+                        print(f"  [fallback: {enc}] {os.path.relpath(path, data_dir)}")
+                    break
+                except (UnicodeDecodeError, LookupError):
+                    continue
+            else:
+                raise RuntimeError(f"Cannot decode {path}")
+        texts.append(content)
+        total_chars += len(content)
     if verbose:
         print(f"Found {len(txt_files)} .txt file(s) in {data_dir}:")
         for path, content in zip(txt_files, texts):
