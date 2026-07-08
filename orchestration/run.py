@@ -140,7 +140,7 @@ class Run:
         seq_len = self.mc.seq_len
         bottleneck = self.mc.bottleneck if self.mc.bottleneck is not None else seq_len
         device = runtime.device
-        text = runtime.text
+        texts = runtime.texts
         bs = self.tc.batch_size
         target_samples = self.tc.target_samples
 
@@ -164,7 +164,7 @@ class Run:
                 return result
 
         # ── Data ──
-        train_ds, val_ds = prepare_data(text, seq_len, self.tc.train_ratio)
+        train_ds, val_ds = prepare_data(texts, seq_len, self.tc.train_ratio)
         if self.tc.noise_prob > 0.0:
             train_ds = NoisyDataset(
                 train_ds, noise_prob=self.tc.noise_prob, noise_std=self.tc.noise_std)

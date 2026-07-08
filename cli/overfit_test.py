@@ -107,9 +107,9 @@ def main(argv: list[str] | None = None):
     print(f'Params: {n_params:,}  Input: {input_dim}  Bottleneck: {bottleneck}  n={args.n}')
 
     # ── Data: single batch ──
-    text = load_text(verbose=False)
-    full_bits = _build_full_bits(text)
-    dataset = SlidingWindowDataset(full_bits, args.seq_len)
+    texts = load_text(verbose=False)
+    full_bits, file_offsets = _build_full_bits(texts, args.seq_len)
+    dataset = SlidingWindowDataset(full_bits, args.seq_len, file_offsets=file_offsets)
     bs = args.batch_size
     indices = torch.randint(0, len(dataset), (bs,))
     x_batch = torch.stack([dataset[i][0] for i in range(bs)]).to(device)

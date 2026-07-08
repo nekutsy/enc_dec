@@ -95,9 +95,10 @@ def main(device_override: torch.device | None = None):
     print(f"Chains: dec enc random | enc random dec | ...")
 
     # ── Data ──
-    text = load_text()
-    full_bits = _build_full_bits(text)
+    texts = load_text()
+    full_bits, _ = _build_full_bits(texts, seq_len=128)
     n_chars = full_bits.numel() // UNICODE_BITS
+    text = ''.join(texts)
 
     # ── Session state ──
     inf: ModelInference | None = None
@@ -275,7 +276,7 @@ def main(device_override: torch.device | None = None):
                 print(f"  #{idx} (s{sl}, {n_params // 10**6:.0f}M)...",
                       end=' ', flush=True)
                 model = load_model(path, sizes, str(device))
-                _, val_ds = prepare_data(text, sl)
+                _, val_ds = prepare_data(texts, sl)
                 val_loader = DataLoader(
                     val_ds, batch_size=256, shuffle=False,
                     num_workers=2 if device.type == 'cuda' else 0,

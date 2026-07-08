@@ -20,13 +20,18 @@ class RuntimeContext:
     Created once per process via setup_runtime().
     """
 
-    def __init__(self, device: Device, text: str):
+    def __init__(self, device: Device, texts: list[str]):
         self.device = device
-        self.text = text
+        self.texts = texts
+
+    @property
+    def text(self) -> str:
+        """Legacy: joined text. Prefer .texts for prepare_data."""
+        return ''.join(self.texts)
 
 
 def setup_runtime(output: OutputConfig,
-                  text: str | None = None,
+                  texts: list[str] | None = None,
                   use_tf32: bool = True) -> RuntimeContext:
     """Resolve device + load text → RuntimeContext.
 
@@ -41,7 +46,7 @@ def setup_runtime(output: OutputConfig,
         torch.backends.cudnn.benchmark = False
         torch.backends.cuda.matmul.allow_tf32 = use_tf32
 
-    if text is None:
-        text = load_text()
+    if texts is None:
+        texts = load_text()
 
-    return RuntimeContext(device, text)
+    return RuntimeContext(device, texts)

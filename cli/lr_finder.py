@@ -124,10 +124,10 @@ def main():
     output = OutputConfig(device=args.device)
     runtime = setup_runtime(output)
     device = runtime.device
-    text = runtime.text
+    texts = runtime.texts
 
     # Data
-    train_ds, _ = prepare_data(text, args.seq_len, train_ratio=0.999)
+    train_ds, _ = prepare_data(texts, args.seq_len, train_ratio=0.999)
 
     # Model
     model = Autoencoder(
@@ -208,11 +208,11 @@ def run_lr_find_for_sweep(
          'steps_used': int, 'history': list[dict], 'all_lr_ranges': list[dict]}
     """
     device = runtime.device
-    text = runtime.text
+    texts = runtime.texts
     seq_len = mc.seq_len
     sizes = arch['sizes']
 
-    train_ds, _ = prepare_data(text, seq_len, train_ratio=0.999)
+    train_ds, _ = prepare_data(texts, seq_len, train_ratio=0.999)
 
     results: list[dict] = []
 

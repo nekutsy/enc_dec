@@ -9,16 +9,21 @@ from torch.utils.data import Dataset
 from configs import UNICODE_BITS
 from encoding.unicode21 import pack_bits_uint8, unpack_uint8_to_float
 
-FULL_BITS_CACHE = "data/cache/full_bits.u8"   # uint8 packed — 8 bits/byte (~0.13 GB)
-OLD_FLOAT_CACHE = "data/cache/full_bits.pt"   # legacy float32 (auto-migrated)
-
 
 def load_text(data_dir="data/dataset", verbose=False):
-    txt_files = glob.glob(os.path.join(data_dir, "*.txt"))
-    texts = []
+    """Scan directory recursively, return one string per .txt file.
+
+    Use **/*.txt with recursive=True to include subdirectories.
+    Files are sorted by path for deterministic ordering.
+    Each file is loaded separately — caller (prepare_data) handles
+    null-padding between files to prevent sliding windows from crossing
+    file boundaries.
+    """
+    txt_files = sorted(glob.glob(os.path.join(data_dir, "**/*.txt"), recursive=True))
     if not txt_files:
         print(f"No .txt files found in {data_dir}, using dummy text.")
-        return "Это тестовый текст для автоэнкодера. " * 50
+        return ["Это тестовый текст для автоэнкодера. " * 50]
+    texts: list[str] = []
     total_chars = 0
     for path in txt_files:
         with open(path, "r", encoding="utf8") as f:
@@ -27,83 +32,132 @@ def load_text(data_dir="data/dataset", verbose=False):
             total_chars += len(content)
     if verbose:
         print(f"Found {len(txt_files)} .txt file(s) in {data_dir}:")
-        for path in txt_files:
-            filename = os.path.basename(path)
-            with open(path, "r", encoding="utf8") as f:
-                print(f"  - {filename}: {len(f.read())} characters")
+        for path, content in zip(txt_files, texts):
+            print(f"  - {os.path.relpath(path, data_dir)}: {len(content)} characters")
     else:
         print(f"Loaded {len(txt_files)} text files — {total_chars:,} characters total")
-    return "".join(texts)
+    return texts
 
 
 
 
 
-def _build_full_bits(text):
-    """Build/cache packed uint8 on disk; return float32 tensor for sliding windows.
+def _build_full_bits(texts: list[str], seq_len: int, cache_name: str = "full_bits"):
+    """Build/cache packed uint8 on disk; return float32 tensor + per-file window counts.
+
+    Files are joined with (seq_len - 1) \\0 padding to prevent sliding windows
+    from crossing file boundaries. Trailing padding covers last file's tail windows.
 
     Disk: uint8 packed (~0.13 GB for 50M chars × 21 bits).
     RAM: float32 (~4.2 GB) — required for torch.as_strided.
-    Auto-migrates legacy float32 cache.
     """
     os.makedirs("data/cache", exist_ok=True)
-    codes = np.array([ord(ch) for ch in text], dtype=np.uint32)
+    cache_path = f"data/cache/{cache_name}_s{seq_len}.u8"
+
+    # Build padded text: file1 + \0*(seq_len-1) + file2 + ... + \0*(seq_len-1)
+    null_pad = '\0' * (seq_len - 1)
+    padded_text = null_pad.join(texts) + null_pad
+    codes = np.array([ord(ch) for ch in padded_text], dtype=np.uint32)
     total_bits = len(codes) * UNICODE_BITS
 
-    # Existing uint8 cache
-    if os.path.exists(FULL_BITS_CACHE):
-        packed = torch.load(FULL_BITS_CACHE, map_location='cpu', weights_only=True)
-        print(f"  Loaded uint8 cache: {packed.numel() / 1e6:.1f} MB")
-        return unpack_uint8_to_float(packed, total_bits)
+    # ── Load from disk cache if exists ──
+    if os.path.exists(cache_path):
+        packed = torch.load(cache_path, map_location='cpu', weights_only=True)
+        expected_bytes = (total_bits + 7) // 8
+        actual_bytes = len(np.asarray(packed)) * (packed.itemsize if hasattr(packed, 'itemsize') else 1)
+        if abs(actual_bytes - expected_bytes) <= 1:
+            print(f"  Loaded uint8 cache: {packed.numel() / 1e6:.1f} MB")
+            full_bits = unpack_uint8_to_float(packed, total_bits)
+            return full_bits, _compute_file_offsets(texts, seq_len)
+        # Cache mismatch (different corpus size) — rebuild
+        print("  Cache mismatch — rebuilding...")
 
-    # Legacy float32 cache → migrate
-    if os.path.exists(OLD_FLOAT_CACHE):
-        print("  Migrating old float32 cache → uint8...")
-        packed = torch.from_numpy(pack_bits_uint8(codes))
-        torch.save(packed, FULL_BITS_CACHE)
-        os.remove(OLD_FLOAT_CACHE)
-        print(f"  Migrated: {packed.numel() / 1e6:.1f} MB uint8")
-        return unpack_uint8_to_float(packed, total_bits)
-
-    # Fresh build
+    # ── Fresh build ──
     packed = torch.from_numpy(pack_bits_uint8(codes))
-    torch.save(packed, FULL_BITS_CACHE)
+    torch.save(packed, cache_path)
     n_gb = packed.numel() / 1e9
     print(f"  Built uint8 cache: {n_gb:.2f} GB (unpacked: {total_bits * 4 / 1e9:.2f} GB float32)")
-    return unpack_uint8_to_float(packed, total_bits)
+    full_bits = unpack_uint8_to_float(packed, total_bits)
+    return full_bits, _compute_file_offsets(texts, seq_len)
+
+
+def _compute_file_offsets(texts: list[str], seq_len: int) -> np.ndarray:
+    """Return (N, 2) array of [start_window, end_window) per file.
+
+    Each file of length L contributes L windows (L positions with ≥1 real char).
+    The (seq_len - 1) zeros between files prevent boundary crossing;
+    all-zero windows in the gap are excluded.
+    """
+    offsets = []
+    cursor = 0  # current character position in padded text
+    for text in texts:
+        L = len(text)
+        offsets.append([cursor, cursor + L])
+        cursor += L + (seq_len - 1)  # file chars + padding
+    return np.array(offsets, dtype=np.int64)
 
 
 class SlidingWindowDataset(Dataset):
     """Sliding window over character bits — stride=1 character.
 
     Each window captures seq_len consecutive characters. With stride=1,
-    each character appears in seq_len different windows → no data starvation
-    for long seq_lens.
+    each character appears in seq_len different windows.
+
+    When file_offsets is provided, only windows with ≥1 real (non-padding)
+    character are included — null-padding gaps are skipped.
     """
 
-    def __init__(self, full_bits, seq_len, indices=None):
+    def __init__(self, full_bits, seq_len, indices=None, file_offsets=None):
         self.seq_len = seq_len
         self.window_bits = seq_len * UNICODE_BITS
         n_total = full_bits.numel() // UNICODE_BITS - seq_len + 1
-        # as_strided view: (n_windows, window_bits) with stride (UNICODE_BITS, 1)
+        # as_strided view: (n_total, window_bits) with stride (UNICODE_BITS, 1)
         self._windows = torch.as_strided(
             full_bits,
             size=(n_total, self.window_bits),
             stride=(UNICODE_BITS, 1),
         )
-        self._indices = (
-            indices if indices is not None
-            else torch.arange(n_total)
-        )
+
+        # When file_offsets is set: only include windows with ≥1 real char
+        if file_offsets is not None:
+            valid_start_positions = _build_valid_indices(file_offsets, seq_len)
+            if indices is not None:
+                # Subset: map global indices to valid positions
+                self._indices = indices
+                self._all_valid = valid_start_positions
+            else:
+                self._indices = valid_start_positions
+        else:
+            self._indices = (
+                indices if indices is not None
+                else torch.arange(n_total)
+            )
 
     def __len__(self):
         return len(self._indices)
 
     def __getitem__(self, idx):
+        pos = self._indices[idx]
         # empty_like + copy_ is cheaper than clone() for strided views
         w = torch.empty(self.window_bits, dtype=torch.float32, device='cpu')
-        w.copy_(self._windows[self._indices[idx]])
+        w.copy_(self._windows[pos])
         return w, w
+
+
+def _build_valid_indices(file_offsets: np.ndarray, seq_len: int) -> torch.Tensor:
+    """Build tensor of valid window start positions from file offsets.
+
+    Each file of length L contributes L windows: positions [start, start+L-1].
+    Trailing (seq_len-1) pad after each file ensures no boundary crossing.
+    """
+    segments = []
+    for start, end in file_offsets:
+        L = end - start
+        if L > 0:
+            segments.append(torch.arange(start, start + L, dtype=torch.int64))
+    if not segments:
+        return torch.zeros(0, dtype=torch.int64)
+    return torch.cat(segments)
 
 
 class NoisyDataset(Dataset):
@@ -154,27 +208,31 @@ class NoisyDataset(Dataset):
 
 
 
-def prepare_data(text: str, seq_len: int, train_ratio: float = 0.99):
+def prepare_data(texts: list[str], seq_len: int, train_ratio: float = 0.99):
     """Build sliding-window dataset and return (train_ds, val_ds).
 
-    Uses shared uint8-packed cache + per-seq_len as_strided view.
+    texts: list of strings — one per input file.
+    Files are padded with (seq_len-1) \0 chars to prevent boundary-crossing
+    windows. Only windows with ≥1 real character are included.
     Returns SlidingWindowDataset objects with non-overlapping indices.
     """
-    full_bits = _build_full_bits(text)
-    dataset = SlidingWindowDataset(full_bits, seq_len)
+    full_bits, file_offsets = _build_full_bits(texts, seq_len)
+    dataset = SlidingWindowDataset(full_bits, seq_len, file_offsets=file_offsets)
     n = len(dataset)
     indices = torch.randperm(n)
     train_size = int(n * train_ratio)
-    train_ds = SlidingWindowDataset(full_bits, seq_len, indices=indices[:train_size])
-    val_ds = SlidingWindowDataset(full_bits, seq_len, indices=indices[train_size:])
+    train_ds = SlidingWindowDataset(full_bits, seq_len, file_offsets=file_offsets,
+                                    indices=indices[:train_size])
+    val_ds = SlidingWindowDataset(full_bits, seq_len, file_offsets=file_offsets,
+                                  indices=indices[train_size:])
     return train_ds, val_ds
 
 
-def export_latent_vectors(model, text, config, device, output_path="data/latent/latent_vectors.pt"):
+def export_latent_vectors(model, texts, config, device, output_path="data/latent/latent_vectors.pt"):
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     model.eval()
-    full_bits = _build_full_bits(text)
-    dataset = SlidingWindowDataset(full_bits, config.seq_len)
+    full_bits, file_offsets = _build_full_bits(texts, config.seq_len)
+    dataset = SlidingWindowDataset(full_bits, config.seq_len, file_offsets=file_offsets)
     loader = torch.utils.data.DataLoader(dataset, batch_size=config.batch_size, shuffle=False)
     latents = []
     with torch.inference_mode():
