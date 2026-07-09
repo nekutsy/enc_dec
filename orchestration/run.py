@@ -191,6 +191,31 @@ class Run:
             self.ws.write_result(self.run_id, result, self.model_name)
             return result
 
+        # ── Pretrain: load donor weights (fresh optimizer, no scheduler state) ──
+        if self.tc.pretrain_run_id:
+            donor_dir = self.ws._find_run_dir(self.tc.pretrain_run_id)
+            if donor_dir is None:
+                print(f'  ⚠ pretrain_run_id={self.tc.pretrain_run_id}: donor run not found')
+                cuda_safe_cleanup()
+                result = RunResult(status='error', error_message=f'Donor run {self.tc.pretrain_run_id} not found')
+                self.registry.finish_run(self.run_id, result)
+                self.ws.write_result(self.run_id, result, self.model_name)
+                return result
+            donor_path = donor_dir / 'model.pth'
+            if not donor_path.is_file():
+                donor_path = donor_dir / 'best.pth'
+            if not donor_path.is_file():
+                print(f'  ⚠ donor has no model.pth or best.pth')
+                cuda_safe_cleanup()
+                result = RunResult(status='error', error_message=f'Donor {self.tc.pretrain_run_id} has no checkpoint')
+                self.registry.finish_run(self.run_id, result)
+                self.ws.write_result(self.run_id, result, self.model_name)
+                return result
+            state = torch.load(str(donor_path), map_location=device, weights_only=True)
+            unwrapped = model._orig_mod if hasattr(model, '_orig_mod') else model
+            unwrapped.load_state_dict(state)
+            print(f'  pretrain: loaded weights from {donor_path} ({len(state)} tensors)')
+
         try:
             model = compile_model(model, device)
         except (torch.cuda.OutOfMemoryError, RuntimeError) as e:

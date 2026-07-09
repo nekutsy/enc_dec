@@ -82,6 +82,7 @@ class TrainConfig:
     greedy_grad_plateau_patience: int = 500    # steps without local improvement → bump LR
     greedy_grad_plateau_multiplier: float = 1.5  # LR multiplier on plateau escape
     greedy_grad_plateau_cooldown: int = 500     # cooldown steps after plateau escape
+    pretrain_run_id: str = ''           # run_id донора: загрузить веса вместо random init
     optimizer: str = 'adamw_fused'     # adamw_fused | adamw | sgd | nag | lion | sophia
     weight_decay: float = 0.01
     decay_linear_only: bool = True     # True → only Linear weights; False → all params
