@@ -38,6 +38,22 @@ def _parse_size(s):
     return int(s)
 
 
+def _apply_gs_args(tc: TrainConfig, args):
+    """Apply greedy_simple CLI overrides to TrainConfig."""
+    if args.gs_inc is not None:
+        tc.greedy_simple_inc = args.gs_inc
+    if args.gs_dec is not None:
+        tc.greedy_simple_dec = args.gs_dec
+    if args.gs_patience is not None:
+        tc.greedy_simple_patience = args.gs_patience
+    if args.gs_warmup is not None:
+        tc.greedy_simple_warmup = args.gs_warmup
+    if args.gs_min_lr is not None:
+        tc.greedy_simple_min_lr = args.gs_min_lr
+    if args.gs_max_lr is not None:
+        tc.greedy_simple_max_lr = args.gs_max_lr
+
+
 def _load_donor_meta(pretrain_run_id: str, ws: Workspace) -> dict:
     """Load donor meta.json, return (model_config_dict, layer_sizes, run_id)."""
     donor_dir = ws._find_run_dir(pretrain_run_id)
@@ -79,6 +95,13 @@ def main():
     p.add_argument('--num-workers', type=int, default=4)
     p.add_argument('--device', default='auto')
     p.add_argument('--no-val', action='store_true')
+    # greedy_simple params
+    p.add_argument('--gs-inc', type=float, default=None, help='greedy_simple increase_factor')
+    p.add_argument('--gs-dec', type=float, default=None, help='greedy_simple decrease_factor')
+    p.add_argument('--gs-patience', type=int, default=None, help='greedy_simple decrease_patience')
+    p.add_argument('--gs-warmup', type=int, default=None, help='greedy_simple warmup steps')
+    p.add_argument('--gs-min-lr', type=float, default=None, help='greedy_simple min_lr')
+    p.add_argument('--gs-max-lr', type=float, default=None, help='greedy_simple max_lr')
 
     args = p.parse_args()
 
@@ -128,6 +151,7 @@ def main():
             weight_decay=args.weight_decay, num_workers=args.num_workers,
             noise_prob=args.noise_prob, noise_std=args.noise_std,
         )
+        _apply_gs_args(tc, args)
 
         cfg = SweepConfig(
             name=f'ft_{donor_run_id[:6]}',
@@ -161,6 +185,15 @@ def main():
         if args.n is not None:
             fixed['n'] = args.n
 
+        tc = TrainConfig(
+                target_samples=target_samples, batch_size=args.batch_size,
+                lr=args.lr, grad_clip=args.grad_clip,
+                scheduler=args.scheduler, optimizer=args.optimizer,
+                weight_decay=args.weight_decay, num_workers=args.num_workers,
+                noise_prob=args.noise_prob, noise_std=args.noise_std,
+            )
+        _apply_gs_args(tc, args)
+
         cfg = SweepConfig(
             name=f'n{args.n}_s{args.seq_len}',
             model=ModelConfig(
@@ -168,13 +201,7 @@ def main():
                 shape=args.shape, activation=args.activation,
                 normalization=args.normalization, dropout=args.dropout,
             ),
-            training=TrainConfig(
-                target_samples=target_samples, batch_size=args.batch_size,
-                lr=args.lr, grad_clip=args.grad_clip,
-                scheduler=args.scheduler, optimizer=args.optimizer,
-                weight_decay=args.weight_decay, num_workers=args.num_workers,
-                noise_prob=args.noise_prob, noise_std=args.noise_std,
-            ),
+            training=tc,
             sweep=SweepSpec(
                 strategy='grid', vary='n', values=[args.n],
                 solve=solve, budget=budget, fixed=fixed,
