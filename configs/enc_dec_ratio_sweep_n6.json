@@ -1,0 +1,56 @@
+{
+  "name": "enc_dec_ratio_sweep_n6",
+  "model": {
+    "seq_len": 128,
+    "bottleneck": 160,
+    "activation": "silu",
+    "normalization": "rmsnorm",
+    "shape": "rectangular",
+    "trapezoid_alpha": 0.1,
+    "init": "orthogonal",
+    "init_gain": 1.0,
+    "dropout": 0.0,
+    "norm_bottleneck": false,
+    "norm_last": false,
+    "residual": true,
+    "residual_norm": "pre"
+  },
+  "training": {
+    "target_samples": 4000000,
+    "batch_size": 256,
+    "lr": 0.0001,
+    "grad_clip": 1.0,
+    "scheduler": "greedy_simple",
+    "warmup_fraction": 0.02,
+    "greedy_simple_min_lr": 1e-6,
+    "greedy_simple_max_lr": 0.4,
+    "greedy_simple_inc": 1.01,
+    "greedy_simple_dec": 0.75,
+    "greedy_simple_patience": 750,
+    "greedy_simple_warmup": 1953,
+    "optimizer": "adamw_fused",
+    "weight_decay": 0.01,
+    "decay_linear_only": true,
+    "use_tf32": true,
+    "noise_prob": 0.1,
+    "noise_std": 3.0,
+    "early_stop_patience": 20,
+    "train_ratio": 0.999,
+    "val_interval": 100000,
+    "checkpoint_interval": 1000000,
+    "num_workers": 4
+  },
+  "sweep": {
+    "strategy": "grid",
+    "vary": "enc_n",
+    "values": [1, 2, 3, 4, 5],
+    "total_n": 6,
+    "solve": "b",
+    "budget": 384000000
+  },
+  "output": {
+    "workspace": "sessions/enc_dec_ratio_sweep",
+    "sweep_log": "sessions/enc_dec_ratio_summary.csv",
+    "device": "auto"
+  }
+}

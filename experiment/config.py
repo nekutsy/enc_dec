@@ -111,6 +111,7 @@ class SweepSpec:
     values: list = field(default_factory=list)
     solve: str | None = None           # b | n | None
     budget: int | None = None          # target parameter count
+    total_n: int | None = None         # fixed enc_n+dec_n sum; complementary auto-set
     fixed: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:

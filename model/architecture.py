@@ -382,6 +382,13 @@ def resolve_architecture(vary_value, vary_name: str,
     elif vary_name == 'b':
         fixed['b'] = vary_value
 
+    # total_n: auto-set complementary enc_n/dec_n from fixed sum
+    if sc.total_n is not None:
+        if 'enc_n' in fixed and 'dec_n' not in fixed:
+            fixed['dec_n'] = sc.total_n - int(fixed['enc_n'])
+        elif 'dec_n' in fixed and 'enc_n' not in fixed:
+            fixed['enc_n'] = sc.total_n - int(fixed['dec_n'])
+
     # Dispatch per shape
     if shape == 'trapezoid':
         return _resolve_trapezoid(mc, sc, input_dim, bottleneck, fixed)
