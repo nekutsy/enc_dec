@@ -57,6 +57,20 @@ bin/enc-dec train --n 3 --budget 160M --device cuda
 
 **Авто-возобновление:** запусти ту же команду — подхватит чекпоинт и продолжит.
 
+**Fine-tune с претрейном:** `--pretrain-from <run_id>` — начать обучение с весов существующего рана.
+Архитектура автоматически наследуется от донора (из `meta.json`). Оптимизатор и шедулер — с нуля.
+
+```bash
+enc-dec train --pretrain-from cce656d8f25a --samples 50M --lr 0.0001
+enc-dec train --pretrain-from cce656d8f25a --samples 100M --lr 0.0001 --scheduler greedy --noise-prob 0.25
+```
+
+При указании `--pretrain-from` игнорируются: `--n`, `--b`, `--seq-len`, `--shape`, `--activation`,
+`--normalization` — они берутся из донора. Остальные аргументы (`--samples`, `--lr`, `--noise-prob`,
+`--scheduler`, ...) применяются как обычно.
+
+Донор не модифицируется — это новый run со своим `run_id`, директорией и логом.
+
 **Дедупликация:** если модель с такими же параметрами уже обучена до `target_samples` — пропустит (Registry find-or-create).
 
 ### Основные аргументы
@@ -79,6 +93,7 @@ bin/enc-dec train --n 3 --budget 160M --device cuda
 | `--normalization` | batchnorm | batchnorm / layernorm / none |
 | `--device` | auto | auto / cuda / cpu |
 | `--batch-size` | 256 | Размер батча |
+| `--pretrain-from` | — | Run ID донора для fine-tune с его весов |
 
 ¹ Не нужны при использовании `--config`.
 
@@ -201,6 +216,7 @@ RESUME_TARGET=20000000 bin/enc-dec resume
     "norm_last": false
   },
   "training": {
+    "pretrain_run_id": "",
     "target_samples": 5000000,
     "batch_size": 256,
     "lr": 0.001,
