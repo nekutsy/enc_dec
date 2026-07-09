@@ -17,6 +17,7 @@ bin/enc-dec <команда> [опции]
 | `overfit` | Overfit-тест на одном батче |
 | `plot` | Построение графиков по логам |
 | `resume` | Дослать все запуски до N семплов |
+| `lr-find` | LR range test для одной архитектуры |
 
 `bin/enc-dec <cmd> --help` покажет опции для конкретной команды.
 
@@ -78,6 +79,8 @@ enc-dec train --pretrain-from cce656d8f25a --samples 100M --lr 0.0001 --schedule
 | Флаг | По умолчанию | Описание |
 |------|-------------|----------|
 | `--n` | **обязателен**¹ | Количество скрытых слоёв с каждой стороны |
+| `--enc-n` | = n | Слоёв в энкодере (переопределяет `--n` для encoder) |
+| `--dec-n` | = enc_n | Слоёв в декодере (по умолчанию равно encoder) |
 | `--budget` | **обязателен**¹ | `160M`, `40M` — целевое количество параметров |
 | `--samples` | `50M` | Сколько семплов обучить |
 | `--seq-len` | 128 | Длина окна в символах |
@@ -96,6 +99,27 @@ enc-dec train --pretrain-from cce656d8f25a --samples 100M --lr 0.0001 --schedule
 | `--pretrain-from` | — | Run ID донора для fine-tune с его весов |
 
 ¹ Не нужны при использовании `--config`.
+
+### Асимметричные архитектуры
+
+Можно задавать разное количество слоёв в энкодере и декодере:
+
+```bash
+# Энкодер 8 слоёв, декодер 3 слоя (тот же бюджет параметров)
+bin/enc-dec train --enc-n 8 --dec-n 3 --budget 40M --samples 5M
+
+# Sweep по разным комбинациям
+bin/enc-dec sweep grid --vary enc_n=3,5,7 --fixed dec_n=2 --solve b --budget 40M
+
+# Overfit с асимметрией
+bin/enc-dec overfit --seq-len 32 --enc-n 4 --dec-n 1 --b 1.5
+
+# LR finder
+bin/enc-dec lr-find --seq-len 64 --enc-n 6 --dec-n 2 --budget 40M --shape rectangular
+```
+
+`--n` — shorthand, задаёт одинаковое количество слоёв с обеих сторон.
+`--enc-n` / `--dec-n` — точный контроль.
 
 ---
 

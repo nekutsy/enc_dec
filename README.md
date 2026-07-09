@@ -21,11 +21,13 @@
 
 Симметричный полносвязный автоэнкодер с настраиваемыми:
 - **Глубина** — задаётся массивом `layer_sizes`, середина = bottleneck
+- **Асимметрия** — можно задать разное количество слоёв в энкодере и декодере (`--enc-n`, `--dec-n`)
 - **Форма** — rectangular, pyramid, interleaved, trapezoid
 - **Активация** — `silu`, `relu`, `gelu`, `leaky_relu`
-- **Нормализация** — `batchnorm` (BatchNorm1d), `layernorm`, `none`
-- **Инициализация** — orthogonal, настраиваемый gain
+- **Нормализация** — `batchnorm` (BatchNorm1d), `layernorm`, `rmsnorm`, `none`
+- **Инициализация** — orthogonal, xavier, kaiming, настраиваемый gain
 - **Dropout** — опциональный
+- **Residual connections** — classic (post-norm) или pre-norm
 
 Каждый скрытый слой: `Linear → Norm → Activation → Dropout`.
 

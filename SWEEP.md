@@ -91,10 +91,12 @@ enc-dec sweep binary --vary n --range 2 16 --solve b --budget 40M
 Что перебирается. Допустимые значения:
 
 **Архитектурные** (`MODEL_LEVEL_VARY`):
-- `n` — количество скрытых слоёв
+- `n` — количество скрытых слоёв (симметрично)
+- `enc_n` — слоёв в энкодере
+- `dec_n` — слоёв в декодере
 - `b` — коэффициент ширины
 - `bottleneck` — размер бутылочного горла
-- `normalization`, `activation`, `dropout`, `norm_bottleneck`, `norm_last`, `trapezoid_alpha`
+- `normalization`, `activation`, `dropout`, `norm_bottleneck`, `norm_last`, `trapezoid_alpha`, `residual`, `residual_norm`
 
 **Тренировочные** (`TRAIN_LEVEL_VARY`):
 - `lr`, `scheduler`, `grad_clip`, `optimizer`, `weight_decay`, `batch_size`, `num_workers`, `noise_prob`, `noise_std`
