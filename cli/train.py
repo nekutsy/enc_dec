@@ -29,7 +29,7 @@ from registry import Registry
 from utils import gpu_health_check
 
 
-_ARCH_CLI_FLAGS = {'n', 'b', 'seq_len', 'bottleneck', 'shape', 'activation', 'normalization', 'dropout'}
+_ARCH_CLI_FLAGS = {'n', 'enc_n', 'dec_n', 'b', 'seq_len', 'bottleneck', 'shape', 'activation', 'normalization', 'dropout'}
 
 
 def _parse_size(s):
@@ -74,6 +74,8 @@ def main():
     p.add_argument('--config', default=None, help='JSON config file')
     p.add_argument('--pretrain-from', default=None, help='Donor run_id for weight init')
     p.add_argument('--n', type=int, default=None)
+    p.add_argument('--enc-n', type=int, default=None, help='Encoder layers (overrides --n for encoder)')
+    p.add_argument('--dec-n', type=int, default=None, help='Decoder layers (default: same as encoder)')
     p.add_argument('--b', type=float, default=None)
     p.add_argument('--shape', default='rectangular',
                    choices=['rectangular', 'pyramid', 'interleaved', 'trapezoid'])
@@ -127,7 +129,7 @@ def main():
             sys.exit(1)
 
         # Warn on CLI arch args that conflict with pretrain
-        arch_defaults = {'n': None, 'b': None, 'seq_len': 128, 'bottleneck': None,
+        arch_defaults = {'n': None, 'enc_n': None, 'dec_n': None, 'b': None, 'seq_len': 128, 'bottleneck': None,
                          'shape': 'rectangular', 'activation': 'silu',
                          'normalization': 'layernorm', 'dropout': 0.0}
         for flag in _ARCH_CLI_FLAGS:
@@ -139,8 +141,13 @@ def main():
         mc = ModelConfig(**donor_mc)
         arch = {'sizes': donor_sizes, 'n_params': donor_meta.get('n_params', 0),
                 'n': donor_meta.get('n', len([s for s in donor_sizes if s == donor_sizes[1]]) // 2),
+                'enc_n': donor_meta.get('enc_n', donor_mc.get('enc_n')),
+                'dec_n': donor_meta.get('dec_n', donor_mc.get('dec_n')),
                 'b': round(donor_sizes[1] / donor_sizes[0], 6) if len(donor_sizes) > 1 else 0,
                 'hidden_dim': donor_sizes[1] if len(donor_sizes) > 1 else 0}
+        # Backward compat: if donor has no enc_n/dec_n, infer from sizes
+        if arch['enc_n'] is None and arch['n']:
+            arch['enc_n'] = arch['dec_n'] = arch['n']
 
         target_samples = _parse_size(args.samples)
         tc = TrainConfig(
@@ -184,6 +191,10 @@ def main():
             fixed['b'] = args.b
         if args.n is not None:
             fixed['n'] = args.n
+        if args.enc_n is not None:
+            fixed['enc_n'] = args.enc_n
+        if args.dec_n is not None:
+            fixed['dec_n'] = args.dec_n
 
         tc = TrainConfig(
                 target_samples=target_samples, batch_size=args.batch_size,
@@ -200,6 +211,7 @@ def main():
                 seq_len=args.seq_len, bottleneck=args.bottleneck,
                 shape=args.shape, activation=args.activation,
                 normalization=args.normalization, dropout=args.dropout,
+                enc_n=args.enc_n, dec_n=args.dec_n,
             ),
             training=tc,
             sweep=SweepSpec(

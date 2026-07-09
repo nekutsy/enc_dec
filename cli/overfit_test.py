@@ -43,6 +43,8 @@ def build_parser():
     p.add_argument('--bottleneck', type=int, default=None,
                    help='Bottleneck dim (default: seq_len)')
     p.add_argument('--n', type=int, default=6, help='Hidden layers per side')
+    p.add_argument('--enc-n', type=int, default=None, help='Encoder layers (overrides --n)')
+    p.add_argument('--dec-n', type=int, default=None, help='Decoder layers (default: same as encoder)')
     p.add_argument('--b', type=float, default=None, help='Width ratio (hidden_dim/input_dim)')
     p.add_argument('--budget', type=str, default=None, help='Target param count, e.g. 384M')
     p.add_argument('--shape', default='rectangular',
@@ -80,6 +82,10 @@ def main(argv: list[str] | None = None):
     bottleneck = args.bottleneck or args.seq_len
     input_dim = args.seq_len * UNICODE_BITS
 
+    # Determine enc_n, dec_n
+    enc_n = args.enc_n if args.enc_n is not None else args.n
+    dec_n = args.dec_n if args.dec_n is not None else enc_n
+
     if args.b is not None and args.n is not None:
         hidden_dim = max(1, int(round(input_dim * args.b)))
     elif args.budget is not None:
@@ -87,24 +93,29 @@ def main(argv: list[str] | None = None):
         cfg = SweepConfig(
             model=ModelConfig(seq_len=args.seq_len, bottleneck=bottleneck,
                               shape=args.shape, activation=args.activation,
-                              normalization=args.normalization),
+                              normalization=args.normalization,
+                              enc_n=enc_n, dec_n=dec_n),
             sweep=SweepSpec(
-                strategy='grid', vary='n', values=[args.n],
+                strategy='grid', vary='n', values=[enc_n],
                 solve='b', budget=budget,
-                fixed={'b': args.b} if args.b else {},
+                fixed={'enc_n': enc_n, 'dec_n': dec_n, 'b': args.b} if args.b else {'enc_n': enc_n, 'dec_n': dec_n},
             ),
         )
-        arch = resolve_architecture(args.n, 'n', cfg)
+        arch = resolve_architecture(enc_n, 'enc_n', cfg)
         hidden_dim = arch['hidden_dim']
     else:
         print("Specify --b or --budget to determine hidden_dim")
         sys.exit(1)
 
-    sizes = _build_layer_sizes(args.n, input_dim, hidden_dim, bottleneck, args.shape)
+    sizes = _build_layer_sizes(enc_n, dec_n, input_dim, hidden_dim, bottleneck, args.shape)
     n_params = count_params(sizes)
 
     print(f'Arch: {" → ".join(str(s) for s in sizes)}')
-    print(f'Params: {n_params:,}  Input: {input_dim}  Bottleneck: {bottleneck}  n={args.n}')
+    print(f'Params: {n_params:,}  Input: {input_dim}  Bottleneck: {bottleneck}')
+    if enc_n != dec_n:
+        print(f'  enc_n={enc_n}  dec_n={dec_n}')
+    else:
+        print(f'  n={enc_n}')
 
     # ── Data: single batch ──
     texts = load_text(verbose=False)
@@ -119,6 +130,7 @@ def main(argv: list[str] | None = None):
     model = Autoencoder(
         sizes, activation=args.activation, normalization=args.normalization,
         init_gain=1.0, dropout=0.0, residual=False,
+        enc_n=enc_n,
     ).to(device)
 
     tc = TrainConfig(
@@ -137,7 +149,9 @@ def main(argv: list[str] | None = None):
           f'(CE baseline: {torch.log(torch.tensor(2.0)):.6f})')
 
     # ── Logger ──
-    mn = f'overfit_{args.shape[:4]}_s{args.seq_len}_n{args.n}_b{round(hidden_dim/input_dim, 4):.4g}'
+    mn = f'overfit_{args.shape[:4]}_s{args.seq_len}_n{enc_n}_b{round(hidden_dim/input_dim, 4):.4g}'
+    if enc_n != dec_n:
+        mn = f'overfit_{args.shape[:4]}_s{args.seq_len}_en{enc_n}_d{dec_n}_b{round(hidden_dim/input_dim, 4):.4g}'
     ws_dir = f'sessions/_overfit/{mn}'
     os.makedirs(ws_dir, exist_ok=True)
     csv_path = os.path.join(ws_dir, 'log.csv')
@@ -221,20 +235,20 @@ def _parse_size(s):
     return int(s)
 
 
-def _build_layer_sizes(n, input_dim, hidden_dim, bottleneck, shape):
+def _build_layer_sizes(enc_n, dec_n, input_dim, hidden_dim, bottleneck, shape):
     """Build layer sizes for the specified shape."""
     from model.architecture import (
         make_rectangular, make_pyramid, make_interleaved, make_trapezoid,
     )
     if shape == 'pyramid':
         d = hidden_dim - bottleneck
-        return make_pyramid(input_dim, bottleneck, n, d)
+        return make_pyramid(input_dim, bottleneck, enc_n, dec_n, d)
     elif shape == 'interleaved':
-        return make_interleaved(input_dim, hidden_dim, bottleneck, n)
+        return make_interleaved(input_dim, hidden_dim, bottleneck, enc_n, dec_n)
     elif shape == 'trapezoid':
-        return make_trapezoid(input_dim, hidden_dim, bottleneck, n, alpha=0.1)
+        return make_trapezoid(input_dim, hidden_dim, bottleneck, enc_n, dec_n, alpha=0.1)
     else:
-        return make_rectangular(input_dim, hidden_dim, bottleneck, n)
+        return make_rectangular(input_dim, hidden_dim, bottleneck, enc_n, dec_n)
 
 
 if __name__ == '__main__':

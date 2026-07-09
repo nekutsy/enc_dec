@@ -206,7 +206,7 @@ class Sweep:
 
         # ── Precompute architectures ──
         all_values = self.strategy.vary_values
-        print(f'{"vary":>8}  {"n":>3}  {"b":>7}  {"params":>10}')
+        print(f'{"vary":>8}  {"enc_n":>5}  {"dec_n":>5}  {"b":>7}  {"params":>10}')
         for v in all_values:
             try:
                 arch = resolve_architecture(v, self.sc.vary, cfg)
@@ -214,7 +214,9 @@ class Sweep:
                 th = training_hash(self.tc)
                 done = self.registry.get_completed_run(fp, th, min_samples=self.tc.target_samples)
                 tag = ' ✓' if done else ''
-                print(f'{v:>8}  {arch["n"]:>3}  {arch["b"]:>7.4g}  {arch["n_params"]:>10,}{tag}')
+                enc_n = arch.get('enc_n', arch.get('n', '?'))
+                dec_n = arch.get('dec_n', arch.get('n', '?'))
+                print(f'{v:>8}  {enc_n:>5}  {dec_n:>5}  {arch["b"]:>7.4g}  {arch["n_params"]:>10,}{tag}')
             except Exception as e:
                 print(f'{v:>8}  ERROR: {e}')
         print()

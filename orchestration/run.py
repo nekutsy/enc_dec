@@ -119,7 +119,12 @@ class Run:
         if shape == 'trapezoid':
             alpha = getattr(mc, 'trapezoid_alpha', 0.1)
             parts.append(f'a{alpha}')
-        parts.append(f'n{arch.get("n", arch.get("n_hidden", "?"))}')
+        enc_n = arch.get('enc_n', arch.get('n', '?'))
+        dec_n = arch.get('dec_n', arch.get('n', '?'))
+        if enc_n == dec_n:
+            parts.append(f'n{enc_n}')
+        else:
+            parts.append(f'en{enc_n}_d{dec_n}')
         if arch.get('b') is not None:
             parts.append(f'b{arch["b"]:.4g}')
         if getattr(mc, 'residual', False):
@@ -180,6 +185,7 @@ class Run:
                 norm_last=self.mc.norm_last,
                 dropout=self.mc.dropout,
                 residual=self.mc.residual, residual_norm=self.mc.residual_norm,
+                enc_n=self.arch.get('enc_n'),
             ).to(device)
         except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
             if isinstance(e, RuntimeError) and 'out of memory' not in str(e).lower():

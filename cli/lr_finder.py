@@ -37,7 +37,26 @@ from training.optimizers import build_optimizer
 from training.lr_finder import find_lr, plot_lr_finder
 from experiment.config import SweepConfig, ModelConfig, TrainConfig, OutputConfig, SweepSpec
 from experiment.context import setup_runtime
-from utils import cuda_safe_cleanup, gpu_health_check
+def _arch_tag(arch: dict, args) -> str:
+    """Build human-readable arch tag: rect_s128_en6_d3_b2.016."""
+    enc_n = arch.get('enc_n', arch.get('n', '?'))
+    dec_n = arch.get('dec_n', arch.get('n', '?'))
+    if enc_n == dec_n:
+        n_part = f'n{enc_n}'
+    else:
+        n_part = f'en{enc_n}_d{dec_n}'
+    return f'{args.shape[:4]}_s{args.seq_len}_{n_part}_b{arch["b"]:.4g}'
+
+
+def _arch_tag(arch: dict, args) -> str:
+    """Build human-readable arch tag: rect_s128_en6_d3_b2.016."""
+    enc_n = arch.get('enc_n', arch.get('n', '?'))
+    dec_n = arch.get('dec_n', arch.get('n', '?'))
+    if enc_n == dec_n:
+        n_part = f'n{enc_n}'
+    else:
+        n_part = f'en{enc_n}_d{dec_n}'
+    return f'{args.shape[:4]}_s{args.seq_len}_{n_part}_b{arch["b"]:.4g}'
 
 
 def parse_args(argv):
@@ -47,6 +66,8 @@ def parse_args(argv):
     parser.add_argument('--shape', default='rectangular',
                         choices=['rectangular', 'pyramid', 'interleaved', 'trapezoid'])
     parser.add_argument('--n', type=int, default=None)
+    parser.add_argument('--enc-n', type=int, default=None, help='Encoder layers')
+    parser.add_argument('--dec-n', type=int, default=None, help='Decoder layers')
     parser.add_argument('--b', type=float, default=None)
     parser.add_argument('--bottleneck', type=int, default=None)
     parser.add_argument('--budget', type=str, default=None)
@@ -86,6 +107,10 @@ def main():
     fixed = {}
     if args.n is not None:
         fixed['n'] = args.n
+    if args.enc_n is not None:
+        fixed['enc_n'] = args.enc_n
+    if args.dec_n is not None:
+        fixed['dec_n'] = args.dec_n
     if args.b is not None:
         fixed['b'] = args.b
 
@@ -97,6 +122,7 @@ def main():
             activation=args.activation,
             shape=args.shape,
             residual=args.residual,
+            enc_n=args.enc_n, dec_n=args.dec_n,
         ),
         training=TrainConfig(
             batch_size=args.batch_size,
@@ -132,6 +158,7 @@ def main():
     # Model
     model = Autoencoder(
         sizes, activation=args.activation,
+        enc_n=arch.get('enc_n'),
     ).to(device)
 
     # Optimizer (use TrainConfig for param grouping)
@@ -170,23 +197,32 @@ def main():
     print(f'{"=" * 50}')
 
     if args.output:
-        arch_tag = f'{args.shape[:4]}_s{args.seq_len}_n{arch["n"]}_b{arch["b"]:.4g}'
+        arch_tag = _arch_tag(arch, args)
         title = f'LR Range Test — {arch_tag}'
         plot_lr_finder(history, suggested_lr, title=title, save_path=args.output)
         print(f'Plot saved to {args.output}')
     else:
         import matplotlib
         matplotlib.use('Agg')
-        arch_tag = f'{args.shape[:4]}_s{args.seq_len}_n{arch["n"]}_b{arch["b"]:.4g}'
+        arch_tag = _arch_tag(arch, args)
         title = f'LR Range Test — {arch_tag}'
         plot_lr_finder(history, suggested_lr, title=title, save_path='lr_find.png')
         print(f'Plot saved to lr_find.png')
 
 
 
+def _format_arch_tag(seq_len: int, arch: dict) -> str:
+    """Format arch tag: s128_en6_d3_b2.016."""
+    enc_n = arch.get('enc_n', arch.get('n', '?'))
+    dec_n = arch.get('dec_n', arch.get('n', '?'))
+    if enc_n == dec_n:
+        n_part = f'n{enc_n}'
+    else:
+        n_part = f'en{enc_n}_d{dec_n}'
+    return f's{seq_len}_{n_part}_b{arch["b"]:.4g}'
 
 
-# ── Sweep-style function (called from sweep CLI) ────────────
+
 
 def run_lr_find_for_sweep(
     arch: dict,
@@ -232,6 +268,7 @@ def run_lr_find_for_sweep(
             norm_last=mc.norm_last,
             dropout=mc.dropout,
             residual=mc.residual, residual_norm=mc.residual_norm,
+            enc_n=arch.get('enc_n'),
         ).to(device)
 
         tc = TrainConfig(optimizer='adamw_fused', batch_size=batch_size)
@@ -263,7 +300,7 @@ def run_lr_find_for_sweep(
     if not no_plot and output_dir:
         os.makedirs(output_dir, exist_ok=True)
         for i, res in enumerate(results):
-            arch_tag = model_name or f's{seq_len}_n{arch["n"]}_b{arch["b"]:.4g}'
+            arch_tag = model_name or _format_arch_tag(seq_len, arch)
             suffix = f'_{res["range"].replace(":", "_")}' if len(results) > 1 else ''
             path = os.path.join(output_dir, f'lr_find_{arch_tag}{suffix}.png')
             title = f'LR Range Test — {arch_tag}'

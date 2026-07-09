@@ -118,6 +118,9 @@ class Workspace:
             'model_name': model_name,
             'layer_sizes': arch.get('sizes', []),
             'n_params': arch.get('n_params', 0),
+            'enc_n': arch.get('enc_n'),
+            'dec_n': arch.get('dec_n'),
+            'n': arch.get('n'),
             'model_config': asdict(mc) if hasattr(mc, '__dataclass_fields__') else mc,
             'train_config': asdict(tc) if hasattr(tc, '__dataclass_fields__') else tc,
         }

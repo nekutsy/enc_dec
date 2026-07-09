@@ -95,11 +95,10 @@ class _Residual(nn.Module):
 
 
 class Autoencoder(nn.Module):
-    """Symmetric autoencoder — encoder compresses to bottleneck, decoder reconstructs.
+    """Autoencoder — encoder compresses to bottleneck, decoder reconstructs.
 
-    Layer sizes are split at the midpoint (bottleneck). First half forms the
-    encoder, second half the decoder. Supports configurable activation,
-    normalization, and optional classic residual (skip) when input/output dims match.
+    Uses enc_n to locate the bottleneck (default: midpoint for backward compat).
+    Supports configurable activation, normalization, and optional residual.
     """
 
     def __init__(self, layer_sizes: list[int], name: str = "autoencoder",
@@ -107,18 +106,23 @@ class Autoencoder(nn.Module):
                  init_gain: float = 1.0,
                  norm_bottleneck: bool = False, norm_last: bool = False,
                  dropout: float = 0.0, residual: bool = False,
-                 residual_norm: str = 'post'):
+                 residual_norm: str = 'post', enc_n: int | None = None):
         super().__init__()
         self.name = name
         self.layer_sizes = layer_sizes
-        self._bottleneck = layer_sizes[len(layer_sizes) // 2]
         self.activation = activation
         self.normalization = normalization
         self.init_gain = init_gain
         self.dropout = dropout
         self.residual = residual
         self.residual_norm = residual_norm if residual else 'none'
-        b_idx = len(layer_sizes) // 2
+
+        # Bottleneck position: enc_n if given, else midpoint (backward compat)
+        if enc_n is not None:
+            b_idx = 1 + enc_n  # input + enc_n hidden layers → bottleneck
+        else:
+            b_idx = len(layer_sizes) // 2
+        self._bottleneck = layer_sizes[b_idx]
 
         enc_layers = _build_seq(
             layer_sizes, activation, normalization, 0, b_idx,
@@ -144,8 +148,13 @@ class Autoencoder(nn.Module):
         return self._bottleneck
 
     def extra_repr(self) -> str:
-        enc = "→".join(str(s) for s in self.layer_sizes[:len(self.layer_sizes) // 2 + 1])
-        dec = "→".join(str(s) for s in self.layer_sizes[len(self.layer_sizes) // 2:])
+        b_idx = 1 + (self._enc_n if hasattr(self, '_enc_n') and self._enc_n is not None
+                     else len(self.layer_sizes) // 2 - 1)
+        # Actually just use the stored b_idx, which we need to save...
+        # Simpler: compute from bottleneck value
+        b_idx = self.layer_sizes.index(self._bottleneck)
+        enc = "→".join(str(s) for s in self.layer_sizes[:b_idx + 1])
+        dec = "→".join(str(s) for s in self.layer_sizes[b_idx:])
         extras = []
         if self.residual:
             tag = '+res-pre' if self.residual_norm == 'pre' else '+res-post'

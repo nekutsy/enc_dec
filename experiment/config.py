@@ -29,6 +29,8 @@ class ModelConfig:
     trapezoid_alpha: float = 0.1       # trapezoid: deviation from base hidden_dim
     init: str = 'orthogonal'           # orthogonal | xavier | kaiming
     init_gain: float = 1.0
+    enc_n: int | None = None           # encoder layers (None → use n from sweep fixed)
+    dec_n: int | None = None           # decoder layers (None → same as enc_n)
     dropout: float = 0.0
     norm_bottleneck: bool = False      # norm on bottleneck layer
     norm_last: bool = False            # norm on final decoder layer

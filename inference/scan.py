@@ -216,6 +216,12 @@ def load_model(path: str, sizes: list[int], device: str | None = None):
     else:
         nb, nl = parse_norm_from_name(path)
         kwargs = {'norm_bottleneck': nb, 'norm_last': nl}
+        model_cfg = {}
+
+    # Pass enc_n for asymmetric architectures
+    enc_n = meta.get('enc_n') or model_cfg.get('enc_n')
+    if enc_n is not None:
+        kwargs['enc_n'] = enc_n
 
     model = Autoencoder(sizes, **kwargs).to(dev)
     state = torch.load(path, map_location=dev, weights_only=True)

@@ -69,6 +69,8 @@ def _cli_shorthand_to_config(args, vary_values) -> SweepConfig:
         model=ModelConfig(
             seq_len=getattr(args, 'seq_len', 32),
             bottleneck=getattr(args, 'bottleneck', None),
+            enc_n=getattr(args, 'enc_n', None),
+            dec_n=getattr(args, 'dec_n', None),
         ),
         training=TrainConfig(
             target_samples=target_samples,
@@ -126,6 +128,8 @@ def build_parser():
     gp.add_argument('--no-val', action='store_true')
     gp.add_argument('--shape', default='rectangular',
                     choices=['rectangular', 'pyramid', 'interleaved', 'trapezoid'])
+    gp.add_argument('--enc-n', type=int, default=None, help='Encoder layers (overrides symmetric --n)')
+    gp.add_argument('--dec-n', type=int, default=None, help='Decoder layers (default: same as encoder)')
 
     # binary — shorthand
     bp = sub.add_parser('binary', help='Binary search over a parameter')
@@ -143,6 +147,8 @@ def build_parser():
     bp.add_argument('--workspace', default='sessions/sweep')
     bp.add_argument('--device', default='auto')
     bp.add_argument('--batch-size', type=int, default=None)
+    bp.add_argument('--enc-n', type=int, default=None, help='Encoder layers (overrides symmetric --n)')
+    bp.add_argument('--dec-n', type=int, default=None, help='Decoder layers (default: same as encoder)')
 
     # lr-find — LR range test sweep
     lp = sub.add_parser('lr-find', help='Run LR range test across architecture variants')
@@ -170,6 +176,8 @@ def build_parser():
     lp.add_argument('--residual-norm', default='post', choices=['post', 'pre'])
     lp.add_argument('--normalization', default='layernorm',
                     choices=['layernorm', 'rmsnorm', 'batchnorm', 'none'])
+    lp.add_argument('--enc-n', type=int, default=None, help='Encoder layers')
+    lp.add_argument('--dec-n', type=int, default=None, help='Decoder layers')
 
     return parser
 
@@ -254,6 +262,11 @@ def _run_lr_find_sweep(args):
             fixed['b'] = 2.0
         if 'n' not in fixed:
             fixed['n'] = 2
+        # Pass asymmetric layer counts
+        if args.enc_n is not None:
+            fixed['enc_n'] = args.enc_n
+        if args.dec_n is not None:
+            fixed['dec_n'] = args.dec_n
 
         cfg = SweepConfig(
             name='lr_find',
