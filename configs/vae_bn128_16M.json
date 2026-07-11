@@ -1,7 +1,8 @@
 {
-  "name": "vae_bottleneck_sweep_n8",
+  "name": "vae_bn128_16M",
   "model": {
-    "seq_len": 128,
+    "seq_len": 32,
+    "bottleneck": 128,
     "activation": "silu",
     "normalization": "rmsnorm",
     "shape": "rectangular",
@@ -12,8 +13,8 @@
     "vae": true
   },
   "training": {
-    "target_samples": 4000000,
-    "batch_size": 256,
+    "target_samples": 16000000,
+    "batch_size": 512,
     "lr": 0.0001,
     "grad_clip": 1.0,
     "scheduler": "greedy_simple",
@@ -28,23 +29,12 @@
     "decay_linear_only": true,
     "use_tf32": true,
     "noise_prob": 0.0,
-    "noise_std": 3.0,
     "vae_beta": 1.0,
     "early_stop_patience": 20,
     "train_ratio": 0.999,
     "val_interval": 100000,
     "checkpoint_interval": 1000000,
     "num_workers": 4
-  },
-  "sweep": {
-    "strategy": "grid",
-    "vary": "bottleneck",
-    "values": [256, 384, 512],
-    "solve": "b",
-    "budget": 448000000,
-    "fixed": {
-      "n": 4
-    }
   },
   "output": {
     "device": "auto"

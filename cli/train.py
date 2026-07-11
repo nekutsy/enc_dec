@@ -179,6 +179,11 @@ def main():
     # ── Normal config path (no pretrain) ──
     elif args.config:
         cfg = SweepConfig.from_json(args.config)
+        # Resolve architecture for the first (or only) sweep value
+        if cfg.sweep.values:
+            arch = resolve_architecture(cfg.sweep.values[0], cfg.sweep.vary, cfg)
+        else:
+            p.error('Config has no sweep values')
     else:
         if args.n is None:
             p.error('--n is required (or --config)')
