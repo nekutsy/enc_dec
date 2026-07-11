@@ -1,0 +1,52 @@
+{
+  "name": "vae_small_sweep",
+  "model": {
+    "seq_len": 32,
+    "activation": "silu",
+    "normalization": "rmsnorm",
+    "shape": "rectangular",
+    "init": "orthogonal",
+    "dropout": 0.0,
+    "residual": true,
+    "residual_norm": "pre",
+    "vae": true
+  },
+  "training": {
+    "target_samples": 4000000,
+    "batch_size": 512,
+    "lr": 0.0001,
+    "grad_clip": 1.0,
+    "scheduler": "greedy_simple",
+    "greedy_simple_min_lr": 1e-6,
+    "greedy_simple_max_lr": 0.4,
+    "greedy_simple_inc": 1.01,
+    "greedy_simple_dec": 0.75,
+    "greedy_simple_patience": 750,
+    "greedy_simple_warmup": 2000,
+    "optimizer": "adamw_fused",
+    "weight_decay": 0.01,
+    "decay_linear_only": true,
+    "use_tf32": true,
+    "noise_prob": 0.0,
+    "noise_std": 3.0,
+    "vae_beta": 1.0,
+    "early_stop_patience": 20,
+    "train_ratio": 0.999,
+    "val_interval": 100000,
+    "checkpoint_interval": 1000000,
+    "num_workers": 4
+  },
+  "sweep": {
+    "strategy": "grid",
+    "vary": "bottleneck",
+    "values": [128, 192, 256],
+    "solve": "b",
+    "budget": 128000000,
+    "fixed": {
+      "n": 4
+    }
+  },
+  "output": {
+    "device": "auto"
+  }
+}
