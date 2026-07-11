@@ -3,12 +3,18 @@
 Caller is responsible for: .to(device), zero_grad(), and interruption checks.
 """
 
+from __future__ import annotations
+
 import torch
+from torch import Tensor
+
+from core.types import ModelLike, OptimizerLike, StepSchedulerLike
 
 
-def step_batch(model, x_batch, y_batch, criterion, optimizer,
+def step_batch(model: ModelLike, x_batch: Tensor, y_batch: Tensor,
+               criterion, optimizer: OptimizerLike,
                use_amp: bool = False, grad_clip: float = 1.0,
-               step_scheduler=None) -> float:
+               step_scheduler: StepSchedulerLike | None = None) -> float:
     """Execute one training step. Returns loss value (float).
 
     Args:

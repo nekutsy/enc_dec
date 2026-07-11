@@ -1,12 +1,16 @@
 """Main training loop — validation, checkpointing, progress."""
 
+from __future__ import annotations
+
 import os
 import sys
 import signal
 
 import torch
-from torch.utils.data import DataLoader
+from torch import Tensor
+from torch.utils.data import DataLoader, Dataset
 
+from core.types import ModelLike, OptimizerLike, StepSchedulerLike, CheckpointSchedulerLike
 from training.step import step_batch
 from training.checkpoint import save_checkpoint, resume_early_stopping_state
 from utils import cuda_safe_cleanup as _cuda_safe_cleanup
@@ -76,10 +80,12 @@ class Interruptible:
 
 # ── Training loop ────────────────────────────────────────────
 
-def run_training(start_samples: int, max_samples: int, model, optimizer, criterion,
-                 train_dataset, val_dataset, train_logger, model_path, batch_size,
+def run_training(start_samples: int, max_samples: int,
+               model: ModelLike, optimizer: OptimizerLike, criterion,
+               train_dataset: Dataset, val_dataset: Dataset, train_logger, model_path, batch_size,
                  seq_len, grad_clip=1.0, num_workers=0,
-                 step_scheduler=None, checkpoint_scheduler=None,
+                 step_scheduler: StepSchedulerLike | None = None,
+               checkpoint_scheduler: CheckpointSchedulerLike | None = None,
                  early_stop_patience=3, no_val=False,
                  val_interval: int | None = None,
                  checkpoint_interval: int | None = None):

@@ -97,6 +97,39 @@ class Workspace:
     def summary_csv_path(self, exp_name: str) -> Path:
         return self.exp_dir(exp_name) / 'summary.csv'
 
+    # ── Registry-backed metadata readers ──────────────────
+
+    def read_meta(self, run_id: str, model_name: str = '') -> dict | None:
+        """Read meta.json for a run. Returns None if not found."""
+        path = self.meta_path(run_id, model_name)
+        if path.is_file():
+            try:
+                with open(path) as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, OSError):
+                pass
+        # Fallback: try plain run_id dir
+        alt = self._paths.run_dir(run_id)
+        alt_meta = alt / 'meta.json'
+        if alt_meta.is_file():
+            try:
+                with open(alt_meta) as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, OSError):
+                pass
+        return None
+
+    def read_result(self, run_id: str, model_name: str = '') -> dict | None:
+        """Read result.json for a run."""
+        path = self.result_path(run_id, model_name)
+        if path.is_file():
+            try:
+                with open(path) as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, OSError):
+                pass
+        return None
+
     # ── Metadata writers ───────────────────────────────────
 
     def write_meta(self, run_id: str, arch: dict, mc, tc, exp_name: str = '',
