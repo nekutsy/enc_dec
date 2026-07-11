@@ -247,12 +247,13 @@ def main():
 
     if not created:
         rd = reg.get_run(run.run_id)
-        if rd and rd.get('status') == 'done':
+        if rd and rd.get('status') == 'done' and rd.get('total_samples', 0) >= cfg.training.target_samples:
             print(f'Already done: loss={rd.get("final_train_loss")} '
                   f'samples={rd.get("total_samples")}')
             return
         else:
-            print(f'Run exists but status={rd.get("status")} — retrying')
+            print(f'Run exists but not finished — retrying (status={rd.get("status")}'
+                  f', samples={rd.get("total_samples", 0)})')
 
     result = run.execute(runtime, no_val=args.no_val)
 

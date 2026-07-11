@@ -36,6 +36,16 @@
     "checkpoint_interval": 1000000,
     "num_workers": 4
   },
+  "sweep": {
+    "strategy": "grid",
+    "vary": "bottleneck",
+    "values": [128],
+    "solve": "b",
+    "budget": 128000000,
+    "fixed": {
+      "n": 4
+    }
+  },
   "output": {
     "device": "auto"
   }
