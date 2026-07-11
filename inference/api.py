@@ -69,7 +69,10 @@ class ModelInference:
         """
         inp, padded = self._text_to_tensor(text)
         with torch.inference_mode():
-            out_logits = self.model(inp).squeeze(0).cpu().numpy()
+            out = self.model(inp)
+            if isinstance(out, tuple):
+                out = out[0]  # VAE: (recon, mu, logvar) → recon
+            out_logits = out.squeeze(0).cpu().numpy()
         out_bits = _sigmoid(out_logits)
         rec = _bits_to_chars(out_bits)
         errors = sum(1 for a, b in zip(padded, rec) if a != b)
@@ -114,6 +117,8 @@ class ModelInference:
                 x_batch = x_batch.to(dev)
                 y_batch = y_batch.to(dev)
                 out = self.model(x_batch)
+                if isinstance(out, tuple):
+                    out = out[0]  # VAE: (recon, mu, logvar) → recon
                 loss = criterion(out, y_batch)
                 n = x_batch.size(0)
                 total_loss += loss.item() * n
