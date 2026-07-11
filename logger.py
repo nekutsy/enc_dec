@@ -31,6 +31,8 @@ class LoggerConfig:
     train_loss_ema: bool = False  # EMA-smoothed loss (β=0.95)
     val_loss: bool = True
     lr: bool = True
+    recon_loss: bool = False     # reconstruction BCE (VAE)
+    kl_loss: bool = False        # KL divergence (VAE)
 
     @classmethod
     def all_off(cls) -> 'LoggerConfig':
@@ -46,7 +48,8 @@ class LoggerConfig:
     def full(cls) -> 'LoggerConfig':
         """All metrics except ema (noisy, distracting)."""
         return cls(epoch=False, total_samples=True, speed_sps=True,
-                   train_loss=True, train_loss_ema=False, val_loss=True, lr=True)
+                   train_loss=True, train_loss_ema=False, val_loss=True, lr=True,
+                   recon_loss=True, kl_loss=True)
 
     # Maps field name → CSV header string, in column order
     _COLUMN_MAP = [
@@ -57,6 +60,8 @@ class LoggerConfig:
         ('train_loss_ema', 'train_loss_ema'),
         ('val_loss',       'val_loss'),
         ('lr',             'lr'),
+        ('recon_loss',     'recon_loss'),
+        ('kl_loss',        'kl_loss'),
     ]
 
     def enabled_fields(self) -> list[str]:
@@ -132,7 +137,8 @@ class TrainingLogger:
     # ── Checkpoint logging ───────────────────────────────────
 
     def _build_row(self, total_samples: int, train_loss: float, epoch_size: int,
-                   val_loss: float | None = None, lr: float | None = None) -> dict:
+                   val_loss: float | None = None, lr: float | None = None,
+                   recon_loss: float | None = None, kl_loss: float | None = None) -> dict:
         """Build a row dict for the enabled fields."""
         now = time_mod.time()
         speed = 0.0
@@ -160,13 +166,20 @@ class TrainingLogger:
                 row[f] = val_loss if val_loss is not None else ''
             elif f == 'lr':
                 row[f] = lr if lr is not None else ''
+            elif f == 'recon_loss':
+                row[f] = recon_loss if recon_loss is not None else ''
+            elif f == 'kl_loss':
+                row[f] = kl_loss if kl_loss is not None else ''
         return row
 
     def on_checkpoint(self, total_samples: int, train_loss: float,
                       epoch_size: int, val_loss: float | None = None,
-                      lr: float | None = None) -> dict:
+                      lr: float | None = None,
+                      recon_loss: float | None = None,
+                      kl_loss: float | None = None) -> dict:
         """Write checkpoint row to per-model CSV. Returns the row dict."""
-        row = self._build_row(total_samples, train_loss, epoch_size, val_loss, lr)
+        row = self._build_row(total_samples, train_loss, epoch_size, val_loss, lr,
+                              recon_loss, kl_loss)
         header = self.config.csv_header()
         fields = self.config.enabled_fields()
 
@@ -185,9 +198,12 @@ class TrainingLogger:
 
     def log_checkpoint(self, total_samples: int, train_loss: float,
                        epoch_size: int, val_loss: float | None = None,
-                       lr: float | None = None, debug: dict | None = None):
+                       lr: float | None = None, debug: dict | None = None,
+                       recon_loss: float | None = None,
+                       kl_loss: float | None = None):
         """Full checkpoint: write CSV + .log + print formatted stdout line."""
-        row = self.on_checkpoint(total_samples, train_loss, epoch_size, val_loss, lr)
+        row = self.on_checkpoint(total_samples, train_loss, epoch_size, val_loss, lr,
+                                 recon_loss, kl_loss)
         line = self.format_line(row, debug=debug)
         print(line, flush=True)
         with open(self.log_path, 'a') as f:
@@ -195,9 +211,12 @@ class TrainingLogger:
 
     def log_final(self, total_samples: int, train_loss: float, epoch_size: int,
                   status: str = 'done', duration_seconds: float = 0.0,
-                  val_loss: float | None = None, debug: dict | None = None):
+                  val_loss: float | None = None, debug: dict | None = None,
+                  recon_loss: float | None = None,
+                  kl_loss: float | None = None):
         """Write final checkpoint and return summary dict for global CSV."""
-        row = self.on_checkpoint(total_samples, train_loss, epoch_size, val_loss)
+        row = self.on_checkpoint(total_samples, train_loss, epoch_size, val_loss, None,
+                                 recon_loss, kl_loss)
         line = self.format_line(row, debug=debug)
         print(line, flush=True)
         with open(self.log_path, 'a') as f:
@@ -230,6 +249,10 @@ class TrainingLogger:
         if 'lr' in row and cfg.lr and self._is_present(row, 'lr'):
             v = row['lr']
             parts.append(f'lr={v:.2e}' if isinstance(v, float) else f'lr={v}')
+        if 'recon_loss' in row and cfg.recon_loss and self._is_present(row, 'recon_loss'):
+            parts.append(f'recon={row["recon_loss"]:.6f}')
+        if 'kl_loss' in row and cfg.kl_loss and self._is_present(row, 'kl_loss'):
+            parts.append(f'KL={row["kl_loss"]:.6f}')
         if 'speed_sps' in row and cfg.speed_sps and row.get('speed_sps', 0) == 0:
             parts = [p for p in parts if not p.startswith('speed=')]
         if debug:

@@ -147,6 +147,8 @@ def run_training(start_samples: int, max_samples: int,
 
     sum_train_loss = 0.0
     sum_train_count = 0
+    sum_recon_loss = 0.0
+    sum_kl_loss = 0.0
 
     next_update = total_samples + UPDATE_INTERVAL
     next_val = total_samples + val_interval
@@ -168,7 +170,7 @@ def run_training(start_samples: int, max_samples: int,
                     bs = x_batch.size(0)
 
                     optimizer.zero_grad(set_to_none=True)
-                    loss_val = step_batch(
+                    loss_val, recon_val, kl_val = step_batch(
                         model, x_batch, y_batch, criterion, optimizer,
                         use_amp=use_amp, grad_clip=grad_clip,
                         step_scheduler=step_scheduler,
@@ -179,6 +181,10 @@ def run_training(start_samples: int, max_samples: int,
                     sum_train_loss += loss_val * bs
                     sum_train_count += bs
                     total_samples += bs
+                    if recon_val is not None:
+                        sum_recon_loss += recon_val * bs
+                    if kl_val is not None:
+                        sum_kl_loss += kl_val * bs
 
                     # ── Progress (stderr, in-place) ──
                     if total_samples >= next_update:
@@ -226,10 +232,14 @@ def run_training(start_samples: int, max_samples: int,
                         debug = None
                         if step_scheduler is not None and hasattr(step_scheduler, 'get_debug_info'):
                             debug = step_scheduler.get_debug_info()
+                        avg_recon = sum_recon_loss / sum_train_count if sum_train_count > 0 else None
+                        avg_kl = sum_kl_loss / sum_train_count if sum_train_count > 0 else None
                         train_logger.log_checkpoint(
                             total_samples, avg_train_loss, epoch_size,
                             val_loss=avg_val_loss,
-                            lr=cur_lr, debug=debug)
+                            lr=cur_lr, debug=debug,
+                            recon_loss=avg_recon,
+                            kl_loss=avg_kl)
 
                         # early-stop disabled
                         # if stale_checkpoints >= early_stop_patience:
@@ -240,6 +250,8 @@ def run_training(start_samples: int, max_samples: int,
                         #     break
 
                         next_val = total_samples + val_interval
+                        sum_recon_loss = 0.0
+                        sum_kl_loss = 0.0
 
                     # ── Checkpoint (model save only, no validation) ──
                     if total_samples >= next_checkpoint:
@@ -248,6 +260,8 @@ def run_training(start_samples: int, max_samples: int,
                                         step_scheduler=step_scheduler)
                         sum_train_loss = 0.0
                         sum_train_count = 0
+                        sum_recon_loss = 0.0
+                        sum_kl_loss = 0.0
                         next_checkpoint = total_samples + checkpoint_interval
                         next_update = total_samples + UPDATE_INTERVAL
 
@@ -273,10 +287,14 @@ def run_training(start_samples: int, max_samples: int,
         debug = None
         if step_scheduler is not None and hasattr(step_scheduler, 'get_debug_info'):
             debug = step_scheduler.get_debug_info()
+        avg_recon = sum_recon_loss / sum_train_count if sum_train_count > 0 else None
+        avg_kl = sum_kl_loss / sum_train_count if sum_train_count > 0 else None
         train_logger.log_checkpoint(
             total_samples, avg_train_loss, epoch_size,
             val_loss=avg_val_loss,
-            lr=cur_lr, debug=debug)
+            lr=cur_lr, debug=debug,
+            recon_loss=avg_recon,
+            kl_loss=avg_kl)
 
     save_checkpoint(model, optimizer, model_path,
                     checkpoint_scheduler=checkpoint_scheduler,
