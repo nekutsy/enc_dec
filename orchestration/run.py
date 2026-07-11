@@ -182,6 +182,7 @@ class Run:
                 dropout=self.mc.dropout,
                 residual=self.mc.residual, residual_norm=self.mc.residual_norm,
                 enc_n=self.arch.get('enc_n'),
+                vae=self.mc.vae, vae_beta=self.tc.vae_beta,
             ).to(device)
         except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
             if isinstance(e, RuntimeError) and 'out of memory' not in str(e).lower():

@@ -17,10 +17,11 @@ from model import Autoencoder
 class ModelFactory:
     """Create an Autoencoder from architecture + config."""
 
-    def __init__(self, arch: dict, mc, device: torch.device):
+    def __init__(self, arch: dict, mc, device: torch.device, tc=None):
         self._arch = arch
         self._mc = mc
         self._device = device
+        self._tc = tc
 
     def build(self) -> nn.Module:
         """Instantiate model on target device. Raises RuntimeError on OOM."""
@@ -37,6 +38,8 @@ class ModelFactory:
                 residual=self._mc.residual,
                 residual_norm=self._mc.residual_norm,
                 enc_n=self._arch.get('enc_n'),
+                vae=self._mc.vae,
+                vae_beta=self._tc.vae_beta if self._tc else 1.0,
             ).to(self._device)
         except torch.cuda.OutOfMemoryError:
             raise RuntimeError('oom')

@@ -94,6 +94,8 @@ def main():
     p.add_argument('--grad-clip', type=float, default=1.0)
     p.add_argument('--noise-prob', type=float, default=0.0)
     p.add_argument('--noise-std', type=float, default=3.0)
+    p.add_argument('--vae', action='store_true', default=None, help='Enable VAE mode (μ/logvar head + KL loss)')
+    p.add_argument('--vae-beta', type=float, default=1.0, help='β weight for KL term (default 1.0)')
     p.add_argument('--num-workers', type=int, default=4)
     p.add_argument('--device', default='auto')
     p.add_argument('--no-val', action='store_true')
@@ -157,6 +159,7 @@ def main():
             scheduler=args.scheduler, optimizer=args.optimizer,
             weight_decay=args.weight_decay, num_workers=args.num_workers,
             noise_prob=args.noise_prob, noise_std=args.noise_std,
+            vae_beta=args.vae_beta,
         )
         _apply_gs_args(tc, args)
 
@@ -202,6 +205,7 @@ def main():
                 scheduler=args.scheduler, optimizer=args.optimizer,
                 weight_decay=args.weight_decay, num_workers=args.num_workers,
                 noise_prob=args.noise_prob, noise_std=args.noise_std,
+                vae_beta=args.vae_beta,
             )
         _apply_gs_args(tc, args)
 

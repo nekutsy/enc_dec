@@ -52,6 +52,15 @@ class ModelInference:
         out_bits = _sigmoid(out_logits)
         return _bits_to_chars(out_bits)
 
+    def sample(self, n: int = 1) -> list[str]:
+        """Sample from VAE prior N(0,I) and decode. Returns list of strings."""
+        if not getattr(self.model, 'vae', False):
+            raise RuntimeError('sample() requires a VAE model')
+        with torch.inference_mode():
+            out_logits = self.model.sample(n, device=self.device).cpu().numpy()
+        out_bits = _sigmoid(out_logits)
+        return [_bits_to_chars(out_bits[i]) for i in range(n)]
+
     def reconstruct(self, text: str) -> tuple[str, int, float]:
         """Reconstruct text through encode→decode.
 

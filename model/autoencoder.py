@@ -99,6 +99,10 @@ class Autoencoder(nn.Module):
 
     Uses enc_n to locate the bottleneck (default: midpoint for backward compat).
     Supports configurable activation, normalization, and optional residual.
+
+    VAE mode (vae=True): encoder output → fc_mu / fc_logvar → reparameterize → decoder.
+    forward() returns (reconstruction, mu, logvar) in VAE mode.
+    encode() returns mu deterministically; sample() draws from N(0,I).
     """
 
     def __init__(self, layer_sizes: list[int], name: str = "autoencoder",
@@ -106,7 +110,8 @@ class Autoencoder(nn.Module):
                  init_gain: float = 1.0,
                  norm_bottleneck: bool = False, norm_last: bool = False,
                  dropout: float = 0.0, residual: bool = False,
-                 residual_norm: str = 'post', enc_n: int | None = None):
+                 residual_norm: str = 'post', enc_n: int | None = None,
+                 vae: bool = False, vae_beta: float = 1.0):
         super().__init__()
         self.name = name
         self.layer_sizes = layer_sizes
@@ -116,6 +121,8 @@ class Autoencoder(nn.Module):
         self.dropout = dropout
         self.residual = residual
         self.residual_norm = residual_norm if residual else 'none'
+        self.vae = vae
+        self.vae_beta = vae_beta
 
         # Bottleneck position: enc_n if given, else midpoint (backward compat)
         if enc_n is not None:
@@ -138,6 +145,14 @@ class Autoencoder(nn.Module):
         self.encoder = nn.Sequential(*enc_layers)
         self.decoder = nn.Sequential(*dec_layers)
 
+        # VAE head: parallel μ and log σ² from encoder output
+        self.fc_mu: nn.Linear | None = None
+        self.fc_logvar: nn.Linear | None = None
+        if vae:
+            b_dim = self._bottleneck
+            self.fc_mu = nn.Linear(b_dim, b_dim)
+            self.fc_logvar = nn.Linear(b_dim, b_dim)
+
         for m in self.modules():
             if isinstance(m, nn.Linear):
                 nn.init.orthogonal_(m.weight, gain=init_gain)
@@ -147,25 +162,56 @@ class Autoencoder(nn.Module):
     def bottleneck(self) -> int:
         return self._bottleneck
 
+    @staticmethod
+    def reparameterize(mu: 'torch.Tensor', logvar: 'torch.Tensor') -> 'torch.Tensor':
+        """Reparameterization trick: z = μ + ε·exp(0.5·log σ²), ε ~ N(0,I)."""
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return mu + eps * std
+
+    @staticmethod
+    def kl_loss(mu: 'torch.Tensor', logvar: 'torch.Tensor') -> 'torch.Tensor':
+        """Closed-form KL divergence D_KL(q(z|x) || N(0,I)), summed over latent dims.
+
+        Returns mean per sample (not sum over batch) — scale-invariant.
+        """
+        return -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=1).mean()
+
     def extra_repr(self) -> str:
-        b_idx = 1 + (self._enc_n if hasattr(self, '_enc_n') and self._enc_n is not None
-                     else len(self.layer_sizes) // 2 - 1)
-        # Actually just use the stored b_idx, which we need to save...
-        # Simpler: compute from bottleneck value
         b_idx = self.layer_sizes.index(self._bottleneck)
         enc = "→".join(str(s) for s in self.layer_sizes[:b_idx + 1])
         dec = "→".join(str(s) for s in self.layer_sizes[b_idx:])
         extras = []
+        if self.vae:
+            extras.append(f'vae(β={self.vae_beta})')
         if self.residual:
             tag = '+res-pre' if self.residual_norm == 'pre' else '+res-post'
             extras.append(tag)
         return f"name={self.name}, act={self.activation}, norm={self.normalization}, enc=({enc}), bottleneck={self._bottleneck}, dec=({dec})" + (', ' + ', '.join(extras) if extras else '')
 
     def forward(self, x):
-        return self.decode(self.encode(x))
+        h = self.encoder(x)
+        if self.vae:
+            mu = self.fc_mu(h)
+            logvar = self.fc_logvar(h)
+            z = self.reparameterize(mu, logvar)
+            recon = self.decoder(z)
+            return recon, mu, logvar
+        return self.decoder(h)
 
     def encode(self, x):
-        return self.encoder(x)
+        h = self.encoder(x)
+        if self.vae:
+            return self.fc_mu(h)  # deterministic: return μ
+        return h
 
     def decode(self, z):
         return self.decoder(z)
+
+    def sample(self, n: int = 1, device=None):
+        """Generate samples from VAE prior N(0,I). Returns logits tensor (n, D)."""
+        if not self.vae:
+            raise RuntimeError('sample() requires vae=True')
+        dev = device or next(self.parameters()).device
+        z = torch.randn(n, self._bottleneck, device=dev)
+        return self.decode(z)

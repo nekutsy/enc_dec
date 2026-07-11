@@ -14,26 +14,42 @@ from core.types import ModelLike, OptimizerLike, StepSchedulerLike
 def step_batch(model: ModelLike, x_batch: Tensor, y_batch: Tensor,
                criterion, optimizer: OptimizerLike,
                use_amp: bool = False, grad_clip: float = 1.0,
-               step_scheduler: StepSchedulerLike | None = None) -> float:
-    """Execute one training step. Returns loss value (float).
+               step_scheduler: StepSchedulerLike | None = None,
+               vae_beta: float = 1.0) -> float:
+    """Execute one training step. Returns scalar loss value.
 
     Args:
         model, x_batch, y_batch: model and inputs (already on device).
-        criterion: loss function.
+        criterion: loss function (BCEWithLogitsLoss).
         optimizer: PyTorch optimizer.
         use_amp: enable bfloat16 autocast (no scaler — bfloat16 doesn't need it).
         grad_clip: max grad norm; <= 0 to disable.
         step_scheduler: optional per-step LR scheduler.
+        vae_beta: β weight for KL term (only used when model.vae=True).
 
-    Returns loss.item() — the loss scalar.
+    Returns loss.item() — the total loss scalar (recon + β·KL).
     """
+    vae_mode = getattr(model, 'vae', False)
+
     if use_amp:
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
-            out = model(x_batch)
-            loss = criterion(out, y_batch)
+            fwd = model(x_batch)
+            if vae_mode:
+                out, mu, logvar = fwd
+                recon_loss = criterion(out, y_batch)
+                kl = model.kl_loss(mu, logvar)
+                loss = recon_loss + vae_beta * kl
+            else:
+                loss = criterion(fwd, y_batch)
     else:
-        out = model(x_batch)
-        loss = criterion(out, y_batch)
+        fwd = model(x_batch)
+        if vae_mode:
+            out, mu, logvar = fwd
+            recon_loss = criterion(out, y_batch)
+            kl = model.kl_loss(mu, logvar)
+            loss = recon_loss + vae_beta * kl
+        else:
+            loss = criterion(fwd, y_batch)
 
     loss.backward()
     if grad_clip > 0:

@@ -110,6 +110,7 @@ def main(device_override: torch.device | None = None):
 
     print(f"\nCommands: enc <text|random|@pos> | dec | z | r | full | val | info | q")
     print(f"Chains: dec enc random | enc random dec | ...")
+    print(f"VAE: sample [N] — generate N samples from prior (VAE models only)")
 
     # ── Data ──
     texts = load_text()
@@ -154,6 +155,8 @@ def main(device_override: torch.device | None = None):
         print(f"  params: {_fmt_params(mi.n_params)}  "
               f"layers: {mi.n_hidden_str}  "
               f"bottleneck: {mi.sizes[len(mi.sizes) // 2]}")
+        if inf is not None and getattr(inf.model, 'vae', False):
+            print(f"  mode: VAE  β={inf.model.vae_beta}")
         if mi.train_loss is not None:
             print(f"  train={mi.train_loss:.6f}  val={mi.val_loss:.6f}"
                   if mi.val_loss is not None else f"  train={mi.train_loss:.6f}")
@@ -194,6 +197,18 @@ def main(device_override: torch.device | None = None):
             print("No latent stored.")
             return
         _print_latent(last_latent)
+
+    def _cmd_sample(args_str: str = ''):
+        """sample [N] — generate from VAE prior N(0,I) and decode."""
+        if not getattr(inf.model, 'vae', False):
+            print("sample requires a VAE model (--vae)")
+            return
+        n = int(args_str) if args_str and args_str.isdigit() else 1
+        n = max(1, min(n, 20))
+        samples = inf.sample(n)
+        for i, s in enumerate(samples):
+            tag = f"[{i}]" if n > 1 else ""
+            print(f"{tag} {s!r}")
 
     def _cmd_random(_args_str: str = ''):
         nonlocal last_latent, last_latent_sl
@@ -385,6 +400,9 @@ def main(device_override: torch.device | None = None):
             continue
         if cmd.lower().startswith('dec'):
             _cmd_dec(cmd[3:].strip() if cmd.lower().startswith('dec ') else '')
+            continue
+        if cmd.lower().startswith('sample'):
+            _cmd_sample(cmd[6:].strip() if cmd.lower().startswith('sample ') else '')
             continue
         if cmd.lower() in ('z', 'latent'):
             _cmd_z()

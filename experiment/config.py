@@ -36,6 +36,7 @@ class ModelConfig:
     norm_last: bool = False            # norm on final decoder layer
     residual: bool = False             # classic residual: f(x) + x where dims match
     residual_norm: str = 'post'        # 'post' | 'pre' — norm placement in residual blocks
+    vae: bool = False                  # VAE mode: μ/logvar split head + KL loss
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -91,6 +92,7 @@ class TrainConfig:
     use_tf32: bool = True               # enable tf32 matmul on Ampere+ (free ~2-8× speedup)
     noise_prob: float = 0.0              # 0→disabled; fraction of symbols perturbed
     noise_std: float = 3.0               # σ for Gaussian noise on uint21 values
+    vae_beta: float = 1.0                # β-VAE: KL divergence weight (1.0 = standard VAE)
     early_stop_patience: int = 20
     train_ratio: float = 0.999
     val_interval: int = 100_000         # samples between validation passes
@@ -174,6 +176,9 @@ class SweepConfig:
         model_data.setdefault('residual', False)
         # backward compat: old configs had no residual_norm field
         model_data.setdefault('residual_norm', 'post')
+        # backward compat: old configs had no vae field
+        model_data.setdefault('vae', False)
+        training_data.setdefault('vae_beta', 1.0)
         # backward compat: old configs use target_symbols
         if 'target_symbols' in training_data and 'target_samples' not in training_data:
             training_data['target_samples'] = training_data.pop('target_symbols')

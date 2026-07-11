@@ -283,7 +283,8 @@ def load_model(path: str, sizes: list[int], device: str | None = None):
                 meta = json.load(f)
             model_cfg = meta.get('model_config', meta)
             for k in ('activation', 'normalization', 'init_gain', 'dropout',
-                      'norm_bottleneck', 'norm_last', 'residual', 'residual_norm'):
+                      'norm_bottleneck', 'norm_last', 'residual', 'residual_norm',
+                      'vae', 'vae_beta'):
                 if k in model_cfg:
                     kwargs[k] = model_cfg[k]
             break

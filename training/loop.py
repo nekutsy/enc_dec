@@ -21,14 +21,21 @@ from utils import cuda_safe_cleanup as _cuda_safe_cleanup
 def _validate(model, val_loader, criterion, device):
     """Run validation and return average loss."""
     model.eval()
+    vae_mode = getattr(model, 'vae', False)
     total_loss = 0.0
     total_samples = 0
     with torch.inference_mode():
         for x_batch, y_batch in val_loader:
             x_batch = x_batch.to(device)
             y_batch = y_batch.to(device)
-            out = model(x_batch)
-            loss = criterion(out, y_batch)
+            fwd = model(x_batch)
+            if vae_mode:
+                out, mu, logvar = fwd
+                recon = criterion(out, y_batch)
+                kl = model.kl_loss(mu, logvar)
+                loss = recon + model.vae_beta * kl
+            else:
+                loss = criterion(fwd, y_batch)
             n = x_batch.size(0)
             total_loss += loss.item() * n
             total_samples += n
@@ -165,6 +172,7 @@ def run_training(start_samples: int, max_samples: int,
                         model, x_batch, y_batch, criterion, optimizer,
                         use_amp=use_amp, grad_clip=grad_clip,
                         step_scheduler=step_scheduler,
+                        vae_beta=getattr(model, 'vae_beta', 1.0),
                     )
 
                     train_logger.on_batch_end(total_samples + bs, loss_val)

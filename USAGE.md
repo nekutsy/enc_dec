@@ -92,6 +92,8 @@ enc-dec train --pretrain-from cce656d8f25a --samples 100M --lr 0.0001 --schedule
 | `--optimizer` | adamw_fused | adamw_fused / adamw / lion / sophia / sgd / nag |
 | `--noise-prob` | 0.0 | Доля зашумлённых символов |
 | `--noise-std` | 3.0 | σ гауссовского шума на uint21 |
+| `--vae` | false | Включить VAE-режим (μ/logvar head + KL loss) |
+| `--vae-beta` | 1.0 | β вес для KL-терма (0.5 = слабее регуляризация, 2.0 = сильнее) |
 | `--activation` | silu | silu / relu / gelu / leaky_relu |
 | `--normalization` | batchnorm | batchnorm / layernorm / none |
 | `--device` | auto | auto / cuda / cpu |
@@ -120,6 +122,44 @@ bin/enc-dec lr-find --seq-len 64 --enc-n 6 --dec-n 2 --budget 40M --shape rectan
 
 `--n` — shorthand, задаёт одинаковое количество слоёв с обеих сторон.
 `--enc-n` / `--dec-n` — точный контроль.
+
+### VAE-режим
+
+Опциональный вариационный режим. Энкодер выдаёт μ и log σ², декодер обучается на семплах из N(μ, σ²).
+
+```bash
+# VAE с β=1 (стандартный)
+bin/enc-dec train --n 6 --budget 384M --samples 50M --vae --vae-beta 1.0
+
+# β-VAE с ослабленной регуляризацией (меньше KL → лучше реконструкция)
+bin/enc-dec train --n 6 --budget 160M --samples 50M --vae --vae-beta 0.1
+
+# Sweep по разным β
+bin/enc-dec sweep grid --vary noise_prob=0.0,0.25 --fixed n=6 --solve b --budget 40M \
+  --override model.vae=true training.vae_beta=0.5
+```
+
+**Отличия от обычного автоэнкодера:**
+- `forward()` возвращает `(reconstruction, μ, log σ²)` — тройку вместо одного тензора
+- `encode()` возвращает μ (детерминированно)
+- Доступен `model.sample(N)` — генерация из N(0,I) приора
+- Loss: `BCE(recon, target) + β · KL(μ, σ² || N(0,I))`
+- Архитектура: два дополнительных линейных слоя на bottleneck для μ и log σ²
+- Число параметров: bottleneck не меняется (μ и log σ² той же размерности) — overhead минимален
+
+**β-балансировка:**
+- `β = 0` — обычный автоэнкодер (KL отключён, VAE вырождается)
+- `β < 1` — ослабленная регуляризация, лучше реконструкция, хуже генерация
+- `β = 1` — стандартный VAE
+- `β > 1` — усиленная регуляризация, лучше диспентанглинг латентного пространства
+
+**Инференс VAE-модели:**
+```
+> 0                    # загрузить VAE-модель
+> sample               # сгенерировать 1 сэмпл из приора
+> sample 5             # сгенерировать 5 сэмплов
+> info                 # покажет mode: VAE  β=1.0
+```
 
 ---
 
@@ -161,6 +201,7 @@ bin/enc-dec infer --gpu      # GPU
 | `z` | Показать латентный вектор |
 | `random` / `r` | Случайное окно → реконструкция |
 | `full [pos]` | 20 окон подряд с позиции |
+| `sample [N]` | Генерация N сэмплов из приора (VAE only) |
 | `<любой текст>` | Прямая реконструкция |
 | `q` | Выход |
 
@@ -237,7 +278,8 @@ RESUME_TARGET=20000000 bin/enc-dec resume
     "init_gain": 1.0,
     "dropout": 0.0,
     "norm_bottleneck": false,
-    "norm_last": false
+    "norm_last": false,
+    "vae": false
   },
   "training": {
     "pretrain_run_id": "",
@@ -253,7 +295,8 @@ RESUME_TARGET=20000000 bin/enc-dec resume
     "train_ratio": 0.999,
     "num_workers": 2,
     "noise_prob": 0.0,
-    "noise_std": 3.0
+    "noise_std": 3.0,
+    "vae_beta": 1.0
   },
   "sweep": {
     "strategy": "grid",
