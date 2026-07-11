@@ -1,0 +1,51 @@
+{
+  "name": "asym_rect_384M_total16",
+  "model": {
+    "seq_len": 128,
+    "bottleneck": 160,
+    "shape": "rectangular",
+    "activation": "silu",
+    "normalization": "layernorm",
+    "init_gain": 1.0,
+    "dropout": 0.0,
+    "norm_bottleneck": false,
+    "norm_last": false,
+    "residual": true,
+    "residual_norm": "post"
+  },
+  "training": {
+    "target_samples": 8000000,
+    "batch_size": 256,
+    "lr": 0.0005,
+    "grad_clip": 1.0,
+    "scheduler": "greedy_simple",
+    "warmup_fraction": 0.02,
+    "optimizer": "adamw_fused",
+    "weight_decay": 0.01,
+    "decay_linear_only": true,
+    "early_stop_patience": 20,
+    "train_ratio": 0.999,
+    "num_workers": 2,
+    "noise_prob": 0.05,
+    "noise_std": 3.0,
+    "greedy_simple_warmup": 2000,
+    "greedy_simple_min_lr": 1e-6,
+    "greedy_simple_max_lr": 0.4,
+    "greedy_simple_inc": 1.015,
+    "greedy_simple_dec": 0.75,
+    "greedy_simple_patience": 1000
+  },
+  "sweep": {
+    "strategy": "grid",
+    "vary": "enc_n",
+    "values": [2, 6, 8, 10, 12],
+    "total_n": 16,
+    "solve": "b",
+    "budget": 384000000
+  },
+  "output": {
+    "workspace": "sessions/asym_rect_total16",
+    "sweep_log": "sessions/asym_rect_total16_summary.csv",
+    "device": "auto"
+  }
+}
