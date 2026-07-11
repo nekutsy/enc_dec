@@ -44,9 +44,12 @@ def training_hash(tc: 'TrainConfig') -> str:
 
     New fields in TrainConfig are automatically included via asdict(tc).
     Only fields in _TRAIN_EXCLUDE are omitted.
+    None-valued optional fields (scheduler_config) are also stripped.
     """
     data = asdict(tc)
     for field in _TRAIN_EXCLUDE:
         data.pop(field, None)
+    # Strip None-valued optional fields to preserve backward compat hashes
+    data = {k: v for k, v in data.items() if v is not None}
     raw = json.dumps(data, sort_keys=True, default=str, ensure_ascii=False)
     return hashlib.sha256(raw.encode()).hexdigest()[:12]

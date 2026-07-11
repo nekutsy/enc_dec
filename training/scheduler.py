@@ -483,6 +483,18 @@ class GreedyGradLR:
 
 # ── Builder ───────────────────────────────────────────────
 
+def _resolve_scheduler_params(tc, mapping: dict) -> dict:
+    """Resolve scheduler params: new scheduler_config dict > legacy flat fields.
+
+    mapping: {scheduler_config_key: (flat_field_name, default_value)}
+    """
+    sc = tc.scheduler_config or {}
+    result = {}
+    for new_key, (old_field, default) in mapping.items():
+        result[new_key] = sc.get(new_key, getattr(tc, old_field, default))
+    return result
+
+
 def build_scheduler(optimizer, train_config, total_steps: int,
                      start_samples: int = 0):
     """Build (per_step_scheduler, per_checkpoint_scheduler) from TrainConfig.
@@ -513,49 +525,60 @@ def build_scheduler(optimizer, train_config, total_steps: int,
         return _build_onecycle(optimizer, tc.lr, total_steps, tc.pct_start), None
 
     if scheduler == "greedy":
+        # Resolve params: scheduler_config dict > legacy flat fields
+        sc = _resolve_scheduler_params(tc, {
+            'factor': ('greedy_factor', 0.5),
+            'beta': ('greedy_beta', 0.9),
+            'lock_steps': ('greedy_lock_steps', 3),
+            'probe_patience': ('greedy_probe_patience', 4),
+            'probe_factor': ('greedy_probe_factor', 0.5),
+            'probe_spike_ratio': ('greedy_probe_spike_ratio', 2.5),
+            'probe_lock_steps': ('greedy_probe_lock', 3),
+            'cooldown_steps': ('greedy_cooldown', 3),
+        })
         warmup = torch.optim.lr_scheduler.LinearLR(
             optimizer, start_factor=0.1, total_iters=warmup_steps
         ) if warmup_steps > 0 else None
-        greedy = GreedyLR(
-            optimizer, factor=tc.greedy_factor, beta=tc.greedy_beta,
-            lock_steps=tc.greedy_lock_steps,
-            probe_patience=tc.greedy_probe_patience,
-            probe_factor=tc.greedy_probe_factor,
-            probe_spike_ratio=tc.greedy_probe_spike_ratio,
-            probe_lock_steps=tc.greedy_probe_lock,
-            cooldown_steps=tc.greedy_cooldown,
-        )
+        greedy = GreedyLR(optimizer, **sc)
         return warmup, greedy
 
     if scheduler == "greedy_simple":
-        wsteps = tc.greedy_simple_warmup
+        sc = _resolve_scheduler_params(tc, {
+            'min_lr': ('greedy_simple_min_lr', 1e-6),
+            'max_lr': ('greedy_simple_max_lr', 0.4),
+            'increase_factor': ('greedy_simple_inc', 1.01),
+            'decrease_factor': ('greedy_simple_dec', 0.75),
+            'decrease_patience': ('greedy_simple_patience', 500),
+            'warmup_steps': ('greedy_simple_warmup', 0),
+            'warmup_start_factor': ('greedy_simple_warmup_start', 0.1),
+        })
+        wsteps = int(sc.pop('warmup_steps', 0))
         if wsteps == 0:
-            wsteps = warmup_steps  # fallback: use warmup_fraction
+            wsteps = warmup_steps
         if start_samples > 0:
-            wsteps = 0  # skip warmup on resume
-        gs = GreedySimpleLR(
-            optimizer, min_lr=tc.greedy_simple_min_lr, max_lr=tc.greedy_simple_max_lr,
-            increase_factor=tc.greedy_simple_inc, decrease_factor=tc.greedy_simple_dec,
-            decrease_patience=tc.greedy_simple_patience,
-            warmup_steps=wsteps, warmup_start_factor=tc.greedy_simple_warmup_start,
-        )
+            wsteps = 0
+        gs = GreedySimpleLR(optimizer, warmup_steps=wsteps, **sc)
         return gs, None
 
     if scheduler == "greedy_grad":
-        wsteps = tc.greedy_grad_warmup
+        sc = _resolve_scheduler_params(tc, {
+            'window': ('greedy_grad_window', 50),
+            'alpha': ('greedy_grad_alpha', 0.01),
+            'momentum': ('greedy_grad_momentum', 0.995),
+            'explore': ('greedy_grad_explore', 0.01),
+            'min_lr': ('greedy_grad_min_lr', 1e-7),
+            'max_lr': ('greedy_grad_max_lr', 0.3),
+            'warmup_steps': ('greedy_grad_warmup', 0),
+            'plateau_patience': ('greedy_grad_plateau_patience', 500),
+            'plateau_multiplier': ('greedy_grad_plateau_multiplier', 1.5),
+            'plateau_cooldown': ('greedy_grad_plateau_cooldown', 500),
+        })
+        wsteps = int(sc.pop('warmup_steps', 0))
         if wsteps == 0:
-            wsteps = warmup_steps  # fallback: use warmup_fraction
+            wsteps = warmup_steps
         if start_samples > 0:
-            wsteps = 0  # skip warmup on resume
-        gg = GreedyGradLR(
-            optimizer, window=tc.greedy_grad_window, alpha=tc.greedy_grad_alpha,
-            momentum=tc.greedy_grad_momentum, explore=tc.greedy_grad_explore,
-            min_lr=tc.greedy_grad_min_lr, max_lr=tc.greedy_grad_max_lr,
-            warmup_steps=wsteps,
-            plateau_patience=tc.greedy_grad_plateau_patience,
-            plateau_multiplier=tc.greedy_grad_plateau_multiplier,
-            plateau_cooldown=tc.greedy_grad_plateau_cooldown,
-        )
+            wsteps = 0
+        gg = GreedyGradLR(optimizer, warmup_steps=wsteps, **sc)
         return gg, None
 
     return None, None
