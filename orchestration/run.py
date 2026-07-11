@@ -38,13 +38,9 @@ def compile_model(model, device):
     if device.type != 'cuda':
         return model
     n_params = sum(p.numel() for p in model.parameters())
-    if n_params <= 50_000:
-        return model
-    try:
-        return torch.compile(model, mode='default')
-    except Exception as e:
-        print(f'  ⚠ torch.compile failed ({e}) — running uncompiled')
-        return model
+    if n_params > 50_000:
+        print(f'  ⚠ skipping torch.compile ({n_params:,} params — 8GB VRAM tight)')
+    return model
 
 
 class Run:
@@ -217,10 +213,11 @@ class Run:
                 self.registry.finish_run(self.run_id, result)
                 self.ws.write_result(self.run_id, result, self.model_name)
                 return result
-            state = torch.load(str(donor_path), map_location=device, weights_only=True)
+            state = torch.load(str(donor_path), map_location='cpu', weights_only=True)
             unwrapped = model._orig_mod if hasattr(model, '_orig_mod') else model
             unwrapped.load_state_dict(state)
-            print(f'  pretrain: loaded weights from {donor_path} ({len(state)} tensors)')
+            del state
+            print(f'  pretrain: loaded weights from {donor_path} ({len(unwrapped.state_dict())} tensors)')
 
         try:
             model = compile_model(model, device)
@@ -350,7 +347,7 @@ class Run:
                 print('  No checkpoint found — starting from scratch')
                 return 0, model_path
             print(f'  Resuming from {start_samples:,} samples. Loading checkpoint...')
-            state = torch.load(effective_path, map_location=device, weights_only=True)
+            state = torch.load(effective_path, map_location='cpu', weights_only=True)
             has_prefix = any(k.startswith('_orig_mod.') for k in state.keys())
             unwrapped = (model._orig_mod if hasattr(model, '_orig_mod') else model)
             if has_prefix:
