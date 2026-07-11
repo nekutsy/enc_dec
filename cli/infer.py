@@ -9,6 +9,7 @@ import argparse
 import sys
 import os
 import random
+import readline  # noqa — enables line editing / history
 
 import torch
 import numpy as np
@@ -17,9 +18,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from encoding.unicode21 import UNICODE_BITS
 from data import load_text, _build_full_bits, prepare_data
-from inference.scan import scan_models, parse_key, load_model
+from inference.scan import scan_models, ModelInfo, load_model
 from inference.api import ModelInference
 from torch.utils.data import DataLoader
+from utils import gpu_health_check
 
 
 # ── Chain parser ────────────────────────────────────────────
@@ -64,34 +66,49 @@ def _random_chunk(text: str, sl: int, n_chars: int, rng: random.Random
     return pos, text[pos:pos + sl]
 
 
+def _fmt_params(n: int) -> str:
+    """Format n_params like '448.1M' or '12.3K'."""
+    if n >= 1_000_000:
+        return f'{n / 1_000_000:.1f}M'
+    if n >= 1_000:
+        return f'{n / 1_000:.1f}K'
+    return str(n)
+
+
+def _fmt_loss(val: float | None) -> str:
+    """Format loss for display. None → '—'."""
+    if val is None:
+        return '—'
+    return f'{val:.4f}'
+
+
+def _print_model_table(models: list[ModelInfo]):
+    """Print scan results table with losses and run_ids."""
+    print(f"{'#':>3}  {'params':>7}  {'layers':>6}  "
+          f"{'train':>8}  {'val':>8}  {'run_id':>12}  model")
+    print("-" * 100)
+    for i, mi in enumerate(models):
+        print(f"{i:>3}  {_fmt_params(mi.n_params):>7}  "
+              f"{mi.n_hidden_str:>6}  "
+              f"{_fmt_loss(mi.train_loss):>8}  "
+              f"{_fmt_loss(mi.val_loss):>8}  "
+              f"{mi.run_id[:12]:>12}  {mi.label}")
+
+
 # ── REPL ────────────────────────────────────────────────────
 
 def main(device_override: torch.device | None = None):
     device = device_override or torch.device('cpu')
     print(f"Device: {device}")
 
-    # ── Scan models ──
-    print("Scanning for trained models...")
     models = scan_models()
     if not models:
         print("No .pth files found in sessions/")
         return
 
-    # ── Display ──
-    print(f"\n{'#':>3}  {'n_params':>12}  {'seq_len':>8}  "
-          f"{'n_hidden':>8}  {'model':>35}  file")
-    print("-" * 110)
-    for i, (path, sizes, n_params, label) in enumerate(models):
-        mid = len(sizes) // 2
-        seq_len = sizes[0] // UNICODE_BITS
-        n_hidden = mid - 1
-        fname = os.path.basename(path)
-        print(f"{i:>3}  {n_params:>12,}  {seq_len:>8}  "
-              f"{n_hidden:>8}  {label:>35}  {fname[:60]}")
+    _print_model_table(models)
 
-    # ── Help ──
-    print(f"\nEnc: enc <text|random|@pos> | Dec: dec | Show latent: z")
-    print(f"Direct: <text> | Random: r | Full: full [pos] | Quit: q")
+    print(f"\nCommands: enc <text|random|@pos> | dec | z | r | full | val | info | q")
     print(f"Chains: dec enc random | enc random dec | ...")
 
     # ── Data ──
@@ -102,6 +119,7 @@ def main(device_override: torch.device | None = None):
 
     # ── Session state ──
     inf: ModelInference | None = None
+    loaded_info: ModelInfo | None = None
     loaded_sl = 0
     last_latent: np.ndarray | None = None
     last_latent_sl = 0
@@ -126,6 +144,19 @@ def main(device_override: torch.device | None = None):
             print('  ' + ' '.join(f'{v:+.4f}' for v in row))
         print(f"  range: [{latent.min():+.4f}, {latent.max():+.4f}]  "
               f"mean={latent.mean():+.4f}  std={latent.std():.4f}")
+
+    def _cmd_info(_args_str: str = ''):
+        if loaded_info is None:
+            print("No model loaded.")
+            return
+        mi = loaded_info
+        print(f"  #{mi.run_id[:12]}  {mi.label}")
+        print(f"  params: {_fmt_params(mi.n_params)}  "
+              f"layers: {mi.n_hidden_str}  "
+              f"bottleneck: {mi.sizes[len(mi.sizes) // 2]}")
+        if mi.train_loss is not None:
+            print(f"  train={mi.train_loss:.6f}  val={mi.val_loss:.6f}"
+                  if mi.val_loss is not None else f"  train={mi.train_loss:.6f}")
 
     def _cmd_enc(args_str: str):
         nonlocal last_latent, last_latent_sl
@@ -219,6 +250,33 @@ def main(device_override: torch.device | None = None):
             last_latent = inf.encode(inp)
             last_latent_sl = sl
 
+    def _load_model_by_idx(idx: int):
+        nonlocal inf, loaded_sl, loaded_info
+        info = models[idx]
+        try:
+            model = load_model(info.path, info.sizes, str(device))
+        except torch.cuda.OutOfMemoryError:
+            print(f"  ⚠ OOM loading #{idx} ({_fmt_params(info.n_params)} params)")
+            if device.type == 'cuda' and info.n_params > 100_000_000:
+                print(f"  Try loading on CPU instead (restart without --gpu)")
+            return
+        except RuntimeError as e:
+            if 'out of memory' in str(e).lower():
+                print(f"  ⚠ OOM loading #{idx} ({_fmt_params(info.n_params)} params)")
+                return
+            raise
+        inf = ModelInference(model, info.sizes[0] // UNICODE_BITS, device)
+        loaded_sl = info.sizes[0] // UNICODE_BITS
+        loaded_info = info
+        loss_str = ''
+        if info.train_loss is not None:
+            loss_str = f'  train={info.train_loss:.4f}'
+            if info.val_loss is not None:
+                loss_str += f'  val={info.val_loss:.4f}'
+        print(f"Loaded #{idx} [{info.run_id[:12]}] "
+              f"s{loaded_sl} {_fmt_params(info.n_params)} "
+              f"n={info.n_hidden_str}{loss_str}")
+
     CHAIN_DISPATCH = {
         'enc': _cmd_enc, 'dec': _cmd_dec,
         'z': _cmd_z, 'latent': _cmd_z,
@@ -232,9 +290,13 @@ def main(device_override: torch.device | None = None):
         if not cmd:
             continue
 
-        # Quit
         if cmd.lower() in ('q', 'quit', 'exit'):
             break
+
+        # info — show loaded model details
+        if cmd.lower() == 'info':
+            _cmd_info()
+            continue
 
         # Load model
         if cmd.lower().startswith('load') or cmd.isdigit():
@@ -248,15 +310,10 @@ def main(device_override: torch.device | None = None):
             if idx < 0 or idx >= len(models):
                 print(f"#{idx} out of range (0–{len(models) - 1})")
                 continue
-            path, sizes, n_params, label = models[idx]
-            sl = sizes[0] // UNICODE_BITS
-            print(f"Loaded #{idx}: s{sl}, {n_params:,} params")
-            loaded_model = load_model(path, sizes, str(device))
-            inf = ModelInference(loaded_model, sl, device)
-            loaded_sl = sl
+            _load_model_by_idx(idx)
             continue
 
-        # Validation (no model needed)
+        # Validation (no model loaded needed)
         if cmd.lower().startswith('val'):
             parts = cmd.split()
             if len(parts) < 2:
@@ -271,20 +328,34 @@ def main(device_override: torch.device | None = None):
                 if idx < 0 or idx >= len(models):
                     print(f"  #{idx} out of range")
                     continue
-                path, sizes, n_params, label = models[idx]
-                sl = sizes[0] // UNICODE_BITS
-                print(f"  #{idx} (s{sl}, {n_params // 10**6:.0f}M)...",
-                      end=' ', flush=True)
-                model = load_model(path, sizes, str(device))
-                _, val_ds = prepare_data(texts, sl)
-                val_loader = DataLoader(
-                    val_ds, batch_size=256, shuffle=False,
-                    num_workers=2 if device.type == 'cuda' else 0,
-                    pin_memory=(device.type == 'cuda'),
-                )
-                val_inf = ModelInference(model, sl, device)
-                val = val_inf.validate(val_loader)
-                print(f"val={val:.6f}")
+                info = models[idx]
+                sl = info.sizes[0] // UNICODE_BITS
+                m_params_label = f"s{sl} {_fmt_params(info.n_params)} [{info.run_id[:12]}]"
+                print(f"  #{idx} ({m_params_label})...", end=' ', flush=True)
+                try:
+                    model = load_model(info.path, info.sizes, str(device))
+                except torch.cuda.OutOfMemoryError:
+                    print("OOM")
+                    continue
+                except RuntimeError as e:
+                    if 'out of memory' in str(e).lower():
+                        print("OOM")
+                        continue
+                    raise
+                try:
+                    _, val_ds = prepare_data(texts, sl)
+                    val_loader = DataLoader(
+                        val_ds, batch_size=256, shuffle=False,
+                        num_workers=2 if device.type == 'cuda' else 0,
+                        pin_memory=(device.type == 'cuda'),
+                    )
+                    val_inf = ModelInference(model, sl, device)
+                    val = val_inf.validate(val_loader)
+                    print(f"val={val:.6f}")
+                finally:
+                    del model, val_inf
+                    if device.type == 'cuda':
+                        torch.cuda.empty_cache()
             continue
 
         # Command chain
@@ -341,11 +412,13 @@ def run(argv: list[str] | None = None):
     parser.add_argument('--cpu', action='store_true', help='Force CPU (default)')
     args = parser.parse_args(argv)
 
-    if args.gpu and torch.cuda.is_available():
-        main(torch.device('cuda'))
+    if args.gpu:
+        if not gpu_health_check():
+            print("GPU not available, falling back to CPU")
+            main(torch.device('cpu'))
+        else:
+            main(torch.device('cuda'))
     else:
-        if args.gpu:
-            print("CUDA not available, falling back to CPU")
         main(torch.device('cpu'))
 
 
