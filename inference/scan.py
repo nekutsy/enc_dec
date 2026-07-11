@@ -36,8 +36,10 @@ class ModelInfo:
             if enc == dec:
                 return str(enc)
             return f'{enc}/{dec}'
-        mid = len(self.sizes) // 2
-        return str(mid)
+        # Fallback for legacy models without enc_n/dec_n in meta:
+        # symmetric sizes = [in, h1..hn, bottleneck, h1..hn, out]
+        # len = 2n + 3, mid = n + 1, so n = mid - 1
+        return str(len(self.sizes) // 2 - 1)
 
 
 def scan_models(sessions_dir: str = 'sessions') -> list[ModelInfo]:
