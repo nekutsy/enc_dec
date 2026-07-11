@@ -250,6 +250,9 @@ class Run:
 
         # ── Logger ──
         lc = log_config or LoggerConfig.full()
+        if not self.mc.vae:
+            lc.recon_loss = False
+            lc.kl_loss = False
         train_logger = TrainingLogger(csv_path, config=lc, model_name=self.model_name,
                                        log_path=str(self.ws.log_txt_path(self.run_id, self.model_name)))
 
