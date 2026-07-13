@@ -17,7 +17,6 @@
 | **[CONFIG.md](doc/CONFIG.md)** | JSON-формат, все поля ModelConfig/TrainConfig/SweepConfig, `--override` |
 | **[SWEEP.md](doc/SWEEP.md)** | Стратегии sweep (grid, binary, binary_on), solve, vary, presets |
 | **[FEATURES.md](doc/FEATURES.md)** | VAE, denoising, fine-tune, асимметрия |
-| **[GPU.md](doc/GPU.md)** | Правила безопасности GPU ⚠️ критично |
 
 ### Для разработки (`dev/`)
 
