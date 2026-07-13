@@ -117,6 +117,10 @@ def main():
                    help='Per-batch noise_std lower bound')
     p.add_argument('--noise-std-max', type=float, default=3.0,
                    help='Per-batch noise_std upper bound')
+    p.add_argument('--noise-strategy', default='linear', choices=['linear', 'uniform'],
+                   help='How to sample from [min, max] range (default: linear)')
+    p.add_argument('--noise-stride', type=int, default=256,
+                   help='Linear: samples between min and max (default: 256)')
     p.add_argument('--vae', action='store_true', default=None, help='Enable VAE mode (μ/logvar head + KL loss)')
     p.add_argument('--vae-beta', type=float, default=1.0, help='β weight for KL term (default 1.0)')
     p.add_argument('--num-workers', type=int, default=4)
@@ -186,6 +190,7 @@ def main():
             weight_decay=args.weight_decay, num_workers=args.num_workers,
             noise_prob_min=prob_min, noise_prob_max=prob_max,
             noise_std_min=std_min, noise_std_max=std_max,
+            noise_strategy=args.noise_strategy, noise_stride=args.noise_stride,
             vae_beta=args.vae_beta, val_interval=args.val_interval,
         )
         _apply_gs_args(tc, args)
@@ -238,6 +243,7 @@ def main():
                 weight_decay=args.weight_decay, num_workers=args.num_workers,
                 noise_prob_min=prob_min, noise_prob_max=prob_max,
                 noise_std_min=std_min, noise_std_max=std_max,
+                noise_strategy=args.noise_strategy, noise_stride=args.noise_stride,
                 vae_beta=args.vae_beta, val_interval=args.val_interval,
             )
         _apply_gs_args(tc, args)

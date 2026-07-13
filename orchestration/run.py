@@ -172,8 +172,10 @@ class Run:
                 noise_prob_min=self.tc.noise_prob_min,
                 noise_prob_max=self.tc.noise_prob_max,
                 noise_std_min=self.tc.noise_std_min,
-                noise_std_max=self.tc.noise_std_max)
-            print(f'  noise: prob=[{self.tc.noise_prob_min}, {self.tc.noise_prob_max}], std=[{self.tc.noise_std_min}, {self.tc.noise_std_max}]')
+                noise_std_max=self.tc.noise_std_max,
+                noise_strategy=self.tc.noise_strategy,
+                noise_stride=self.tc.noise_stride)
+            print(f'  noise: prob=[{self.tc.noise_prob_min}, {self.tc.noise_prob_max}], std=[{self.tc.noise_std_min}, {self.tc.noise_std_max}], {self.tc.noise_strategy} stride={self.tc.noise_stride}')
 
         # ── Model ──
         try:

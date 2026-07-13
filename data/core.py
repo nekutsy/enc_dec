@@ -183,19 +183,23 @@ class NoisyDataset(Dataset):
       3. Round to nearest integer, clamp to [0, 2²¹−1]
       4. Convert back to 21 bits
 
-    Per-batch sampling: noise_prob and noise_std are sampled uniformly
-    from [min, max] ranges on each __getitem__ call.
+    Per-sample noise: noise_prob and noise_std are derived from [min, max] ranges.
+    Strategy 'linear': deterministic interpolation by sample index; each batch
+    covers the full range. Strategy 'uniform': random independent per sample.
 
     Target (y) stays clean — model must denoise.
     """
 
     def __init__(self, base_dataset, noise_prob_min=0.0, noise_prob_max=0.0,
-                 noise_std_min=3.0, noise_std_max=3.0, seed=None):
+                 noise_std_min=3.0, noise_std_max=3.0,
+                 noise_strategy='linear', noise_stride=256, seed=None):
         self.base = base_dataset
         self.noise_prob_min = noise_prob_min
         self.noise_prob_max = noise_prob_max
         self.noise_std_min = noise_std_min
         self.noise_std_max = noise_std_max
+        self._strategy = noise_strategy
+        self._stride = noise_stride
         self._rng = np.random.default_rng(seed)
         self._powers = 2 ** torch.arange(UNICODE_BITS, dtype=torch.float32)
         self._max_val = (1 << UNICODE_BITS) - 1
@@ -205,15 +209,26 @@ class NoisyDataset(Dataset):
 
     def __getitem__(self, idx):
         x, y = self.base[idx]
-        noisy_x = self._add_noise(x, self.base.seq_len)
+        noisy_x = self._add_noise(x, self.base.seq_len, idx)
         return noisy_x, y
 
-    def _add_noise(self, bits, seq_len):
+    def _sample_from_range(self, lo, hi, idx):
+        """Sample from [lo, hi] according to strategy."""
+        if lo >= hi:
+            return lo
+        if self._strategy == 'linear':
+            pos = idx % self._stride
+            t = pos / (self._stride - 1) if self._stride > 1 else 0.0
+            return lo + (hi - lo) * t
+        # uniform
+        return float(self._rng.uniform(lo, hi))
+
+    def _add_noise(self, bits, seq_len, idx):
         chars = bits.view(seq_len, UNICODE_BITS)
         uints = (chars @ self._powers).long()
 
-        noise_prob = float(self._rng.uniform(self.noise_prob_min, self.noise_prob_max))
-        noise_std = float(self._rng.uniform(self.noise_std_min, self.noise_std_max))
+        noise_prob = self._sample_from_range(self.noise_prob_min, self.noise_prob_max, idx)
+        noise_std = self._sample_from_range(self.noise_std_min, self.noise_std_max, idx)
 
         if noise_prob <= 0.0:
             return bits

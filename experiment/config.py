@@ -94,6 +94,8 @@ class TrainConfig:
     noise_prob_max: float = 0.0          # per-sample upper bound (0→disabled)
     noise_std_min: float = 3.0           # per-sample lower bound for noise_std
     noise_std_max: float = 3.0           # per-sample upper bound
+    noise_strategy: str = 'linear'       # linear | uniform — how to sample from range
+    noise_stride: int = 256              # linear: samples between min and max (0→use batch_size)
     vae_beta: float = 1.0                # β-VAE: KL divergence weight (1.0 = standard VAE)
     early_stop_patience: int = 20
     train_ratio: float = 0.999

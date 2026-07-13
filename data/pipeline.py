@@ -25,6 +25,8 @@ class DataConfig:
     noise_prob_max: float
     noise_std_min: float
     noise_std_max: float
+    noise_strategy: str = 'linear'
+    noise_stride: int = 256
 
 
 class DataPipeline:
@@ -58,6 +60,8 @@ class DataPipeline:
                 noise_prob_max=config.noise_prob_max,
                 noise_std_min=config.noise_std_min,
                 noise_std_max=config.noise_std_max,
+                noise_strategy=config.noise_strategy,
+                noise_stride=config.noise_stride,
             )
         return train_ds, val_ds
 
@@ -71,4 +75,6 @@ class DataPipeline:
             noise_prob_max=tc.noise_prob_max,
             noise_std_min=tc.noise_std_min,
             noise_std_max=tc.noise_std_max,
+            noise_strategy=tc.noise_strategy,
+            noise_stride=tc.noise_stride,
         )

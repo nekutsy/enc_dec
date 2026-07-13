@@ -97,7 +97,8 @@ MODEL_LEVEL_VARY = {'normalization', 'activation', 'dropout',
                     'trapezoid_alpha', 'residual', 'residual_norm'}
 TRAIN_LEVEL_VARY = {'lr', 'scheduler', 'grad_clip', 'optimizer',
                     'weight_decay', 'batch_size', 'num_workers',
-                    'noise_prob_min', 'noise_prob_max', 'noise_std_min', 'noise_std_max', 'vae_beta'}
+                    'noise_prob_min', 'noise_prob_max', 'noise_std_min', 'noise_std_max',
+                    'noise_strategy', 'noise_stride', 'vae_beta'}
 N_VARY = {'n', 'enc_n', 'dec_n'}
 
 
