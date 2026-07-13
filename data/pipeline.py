@@ -21,8 +21,10 @@ class DataConfig:
     """What DataPipeline needs to know — extracted from ModelConfig + TrainConfig."""
     seq_len: int
     train_ratio: float
-    noise_prob: float
-    noise_std: float
+    noise_prob_min: float
+    noise_prob_max: float
+    noise_std_min: float
+    noise_std_max: float
 
 
 class DataPipeline:
@@ -49,11 +51,13 @@ class DataPipeline:
         train_ds, val_ds = _data_mod.prepare_data(
             self.texts, config.seq_len, config.train_ratio)
 
-        if config.noise_prob > 0.0:
+        if config.noise_prob_max > 0.0:
             train_ds = _data_mod.NoisyDataset(
                 train_ds,
-                noise_prob=config.noise_prob,
-                noise_std=config.noise_std,
+                noise_prob_min=config.noise_prob_min,
+                noise_prob_max=config.noise_prob_max,
+                noise_std_min=config.noise_std_min,
+                noise_std_max=config.noise_std_max,
             )
         return train_ds, val_ds
 
@@ -63,6 +67,8 @@ class DataPipeline:
         return DataConfig(
             seq_len=seq_len,
             train_ratio=tc.train_ratio,
-            noise_prob=tc.noise_prob,
-            noise_std=tc.noise_std,
+            noise_prob_min=tc.noise_prob_min,
+            noise_prob_max=tc.noise_prob_max,
+            noise_std_min=tc.noise_std_min,
+            noise_std_max=tc.noise_std_max,
         )

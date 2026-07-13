@@ -183,13 +183,19 @@ class NoisyDataset(Dataset):
       3. Round to nearest integer, clamp to [0, 2²¹−1]
       4. Convert back to 21 bits
 
+    Per-batch sampling: noise_prob and noise_std are sampled uniformly
+    from [min, max] ranges on each __getitem__ call.
+
     Target (y) stays clean — model must denoise.
     """
 
-    def __init__(self, base_dataset, noise_prob=0.05, noise_std=3.0, seed=None):
+    def __init__(self, base_dataset, noise_prob_min=0.0, noise_prob_max=0.0,
+                 noise_std_min=3.0, noise_std_max=3.0, seed=None):
         self.base = base_dataset
-        self.noise_prob = noise_prob
-        self.noise_std = noise_std
+        self.noise_prob_min = noise_prob_min
+        self.noise_prob_max = noise_prob_max
+        self.noise_std_min = noise_std_min
+        self.noise_std_max = noise_std_max
         self._rng = np.random.default_rng(seed)
         self._powers = 2 ** torch.arange(UNICODE_BITS, dtype=torch.float32)
         self._max_val = (1 << UNICODE_BITS) - 1
@@ -206,10 +212,16 @@ class NoisyDataset(Dataset):
         chars = bits.view(seq_len, UNICODE_BITS)
         uints = (chars @ self._powers).long()
 
+        noise_prob = float(self._rng.uniform(self.noise_prob_min, self.noise_prob_max))
+        noise_std = float(self._rng.uniform(self.noise_std_min, self.noise_std_max))
+
+        if noise_prob <= 0.0:
+            return bits
+
         r = self._rng.random(seq_len)
-        noise_mask = torch.from_numpy(r < self.noise_prob).to(torch.long)
+        noise_mask = torch.from_numpy(r < noise_prob).to(torch.long)
         noise_vals = torch.from_numpy(
-            self._rng.normal(0, self.noise_std, seq_len)).float()
+            self._rng.normal(0, noise_std, seq_len)).float()
 
         noisy = uints.float() + noise_mask.float() * noise_vals
         noisy = torch.round(noisy).long().clamp(0, self._max_val)

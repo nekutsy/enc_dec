@@ -166,10 +166,14 @@ class Run:
 
         # ── Data ──
         train_ds, val_ds = prepare_data(texts, seq_len, self.tc.train_ratio)
-        if self.tc.noise_prob > 0.0:
+        if self.tc.noise_prob_max > 0.0:
             train_ds = NoisyDataset(
-                train_ds, noise_prob=self.tc.noise_prob, noise_std=self.tc.noise_std)
-            print(f'  noise: prob={self.tc.noise_prob}, std={self.tc.noise_std}')
+                train_ds,
+                noise_prob_min=self.tc.noise_prob_min,
+                noise_prob_max=self.tc.noise_prob_max,
+                noise_std_min=self.tc.noise_std_min,
+                noise_std_max=self.tc.noise_std_max)
+            print(f'  noise: prob=[{self.tc.noise_prob_min}, {self.tc.noise_prob_max}], std=[{self.tc.noise_std_min}, {self.tc.noise_std_max}]')
 
         # ── Model ──
         try:
@@ -261,8 +265,8 @@ class Run:
             f'arch: {arch_str}',
             f'params: {n_params:,}  batch: {bs}',
         ]
-        if self.tc.noise_prob > 0.0:
-            header_lines.append(f'noise: prob={self.tc.noise_prob}, std={self.tc.noise_std}')
+        if self.tc.noise_prob_max > 0.0:
+            header_lines.append(f'noise: prob=[{self.tc.noise_prob_min}, {self.tc.noise_prob_max}], std=[{self.tc.noise_std_min}, {self.tc.noise_std_max}]')
         train_logger.log_header(header_lines)
 
         rem = max(0, target_samples - start_samples)

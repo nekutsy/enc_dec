@@ -151,14 +151,24 @@ def resolve_architecture(vary_value, vary_name: str,
     mc = sweep_config.model
     sc = sweep_config.sweep
 
+    # Handle legacy vary names that were renamed to range fields
+    _LEGACY_VARY = {'noise_prob', 'noise_std'}
+
     # Apply vary to the right config object
     if vary_name in MODEL_LEVEL_VARY:
         setattr(mc, vary_name, vary_value)
     elif vary_name in TRAIN_LEVEL_VARY:
         setattr(sweep_config.training, vary_name, vary_value)
+    elif vary_name in _LEGACY_VARY:
+        if vary_name == 'noise_prob':
+            sweep_config.training.noise_prob_min = vary_value
+            sweep_config.training.noise_prob_max = vary_value
+        elif vary_name == 'noise_std':
+            sweep_config.training.noise_std_min = vary_value
+            sweep_config.training.noise_std_max = vary_value
 
     # If vary was model/train-level, fall back to n or b from fixed
-    if vary_name in MODEL_LEVEL_VARY | TRAIN_LEVEL_VARY:
+    if vary_name in MODEL_LEVEL_VARY | TRAIN_LEVEL_VARY | _LEGACY_VARY:
         fixed = dict(sc.fixed)
         for n_key in ['n', 'enc_n', 'dec_n']:
             if n_key in fixed:

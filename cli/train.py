@@ -69,6 +69,19 @@ def _load_donor_meta(pretrain_run_id: str, ws: Workspace) -> dict:
     return meta
 
 
+def _resolve_noise_args(args):
+    """Resolve noise CLI args with backward compat: --noise-prob → fixed range."""
+    prob_min = args.noise_prob_min
+    prob_max = args.noise_prob_max
+    std_min = args.noise_std_min
+    std_max = args.noise_std_max
+    if args.noise_prob is not None:
+        prob_min = prob_max = args.noise_prob
+    if args.noise_std is not None:
+        std_min = std_max = args.noise_std
+    return prob_min, prob_max, std_min, std_max
+
+
 def main():
     p = argparse.ArgumentParser(description='Train a single autoencoder')
     p.add_argument('--config', default=None, help='JSON config file')
@@ -92,11 +105,22 @@ def main():
     p.add_argument('--optimizer', default='adamw_fused')
     p.add_argument('--weight-decay', type=float, default=0.01)
     p.add_argument('--grad-clip', type=float, default=1.0)
-    p.add_argument('--noise-prob', type=float, default=0.0)
-    p.add_argument('--noise-std', type=float, default=3.0)
+    p.add_argument('--noise-prob', type=float, default=None,
+                   help='Fixed noise_prob (0..1). For per-batch range use --noise-prob-min + --noise-prob-max')
+    p.add_argument('--noise-prob-min', type=float, default=0.0,
+                   help='Per-batch noise_prob lower bound (0..1)')
+    p.add_argument('--noise-prob-max', type=float, default=0.0,
+                   help='Per-batch noise_prob upper bound (0..1)')
+    p.add_argument('--noise-std', type=float, default=None,
+                   help='Fixed noise_std. For per-batch range use --noise-std-min + --noise-std-max')
+    p.add_argument('--noise-std-min', type=float, default=3.0,
+                   help='Per-batch noise_std lower bound')
+    p.add_argument('--noise-std-max', type=float, default=3.0,
+                   help='Per-batch noise_std upper bound')
     p.add_argument('--vae', action='store_true', default=None, help='Enable VAE mode (μ/logvar head + KL loss)')
     p.add_argument('--vae-beta', type=float, default=1.0, help='β weight for KL term (default 1.0)')
     p.add_argument('--num-workers', type=int, default=4)
+    p.add_argument('--val-interval', type=int, default=100000, help='Samples between validations')
     p.add_argument('--device', default='auto')
     p.add_argument('--no-val', action='store_true')
     # greedy_simple params
@@ -116,6 +140,8 @@ def main():
     if not gpu_health_check():
         print('GPU not available')
         sys.exit(1)
+
+    prob_min, prob_max, std_min, std_max = _resolve_noise_args(args)
 
     # ── Pretrain: load donor meta, override model config ──
     donor_run_id = args.pretrain_from
@@ -158,8 +184,9 @@ def main():
             lr=args.lr, grad_clip=args.grad_clip,
             scheduler=args.scheduler, optimizer=args.optimizer,
             weight_decay=args.weight_decay, num_workers=args.num_workers,
-            noise_prob=args.noise_prob, noise_std=args.noise_std,
-            vae_beta=args.vae_beta,
+            noise_prob_min=prob_min, noise_prob_max=prob_max,
+            noise_std_min=std_min, noise_std_max=std_max,
+            vae_beta=args.vae_beta, val_interval=args.val_interval,
         )
         _apply_gs_args(tc, args)
 
@@ -209,8 +236,9 @@ def main():
                 lr=args.lr, grad_clip=args.grad_clip,
                 scheduler=args.scheduler, optimizer=args.optimizer,
                 weight_decay=args.weight_decay, num_workers=args.num_workers,
-                noise_prob=args.noise_prob, noise_std=args.noise_std,
-                vae_beta=args.vae_beta,
+                noise_prob_min=prob_min, noise_prob_max=prob_max,
+                noise_std_min=std_min, noise_std_max=std_max,
+                vae_beta=args.vae_beta, val_interval=args.val_interval,
             )
         _apply_gs_args(tc, args)
 

@@ -52,9 +52,16 @@ def main():
             print(f'[{run_id[:6]}] already at {old_target:,} — skip')
             continue
 
-        # Reconstruct configs from meta
+        # Reconstruct configs from meta — with backward compat for old noise fields
         mc = ModelConfig(**meta['model_config'])
-        tc = TrainConfig(**meta['train_config'])
+        tc_data = dict(meta['train_config'])
+        if 'noise_prob' in tc_data and 'noise_prob_min' not in tc_data:
+            tc_data['noise_prob_min'] = tc_data.pop('noise_prob')
+            tc_data['noise_prob_max'] = tc_data['noise_prob_min']
+        if 'noise_std' in tc_data and 'noise_std_min' not in tc_data:
+            tc_data['noise_std_min'] = tc_data.pop('noise_std')
+            tc_data['noise_std_max'] = tc_data['noise_std_min']
+        tc = TrainConfig(**tc_data)
         tc.target_samples = TARGET
 
         arch = {
@@ -70,7 +77,7 @@ def main():
         exp_name = meta.get('experiment', '')
 
         print(f'\n{"=" * 55}')
-        print(f'[{run_id[:6]}] target: {old_target:,} → {TARGET:,}  noise={tc.noise_prob}')
+        print(f'[{run_id[:6]}] target: {old_target:,} → {TARGET:,}  noise=[{tc.noise_prob_min}, {tc.noise_prob_max}]')
 
         # Bypass find_or_create — use existing run_id directly
         run = Run(run_id, arch, mc, tc, reg, ws,

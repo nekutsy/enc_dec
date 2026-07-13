@@ -90,8 +90,10 @@ class TrainConfig:
     weight_decay: float = 0.01
     decay_linear_only: bool = True     # True → only Linear weights; False → all params
     use_tf32: bool = True               # enable tf32 matmul on Ampere+ (free ~2-8× speedup)
-    noise_prob: float = 0.0              # 0→disabled; fraction of symbols perturbed
-    noise_std: float = 3.0               # σ for Gaussian noise on uint21 values
+    noise_prob_min: float = 0.0          # per-sample lower bound for noise_prob
+    noise_prob_max: float = 0.0          # per-sample upper bound (0→disabled)
+    noise_std_min: float = 3.0           # per-sample lower bound for noise_std
+    noise_std_max: float = 3.0           # per-sample upper bound
     vae_beta: float = 1.0                # β-VAE: KL divergence weight (1.0 = standard VAE)
     early_stop_patience: int = 20
     train_ratio: float = 0.999
@@ -182,6 +184,13 @@ class SweepConfig:
         # backward compat: old configs use target_symbols
         if 'target_symbols' in training_data and 'target_samples' not in training_data:
             training_data['target_samples'] = training_data.pop('target_symbols')
+        # backward compat: old flat noise_prob/noise_std → range [min, max]
+        if 'noise_prob' in training_data and 'noise_prob_min' not in training_data:
+            training_data['noise_prob_min'] = training_data.pop('noise_prob')
+            training_data['noise_prob_max'] = training_data['noise_prob_min']
+        if 'noise_std' in training_data and 'noise_std_min' not in training_data:
+            training_data['noise_std_min'] = training_data.pop('noise_std')
+            training_data['noise_std_max'] = training_data['noise_std_min']
 
         return cls(
             name=data.get('name', 'sweep'),

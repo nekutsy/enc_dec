@@ -62,7 +62,7 @@ print(f'VRAM after weights: {torch.cuda.memory_allocated()/1024**3:.2f} GB')
 # ── Optimizer & Scheduler ──
 tc = TrainConfig(
     target_samples=TARGET, batch_size=BS, lr=LR, grad_clip=GCLIP,
-    scheduler=SCHED, optimizer=OPTIM, noise_prob=0.0, weight_decay=0.01,
+    scheduler=SCHED, optimizer=OPTIM, noise_prob_min=0.0, noise_prob_max=0.0, weight_decay=0.01,
     greedy_simple_inc=GS_INC, greedy_simple_dec=GS_DEC,
     greedy_simple_patience=GS_PAT, greedy_simple_warmup=GS_WARMUP,
     greedy_simple_min_lr=GS_MIN_LR, greedy_simple_max_lr=GS_MAX_LR,

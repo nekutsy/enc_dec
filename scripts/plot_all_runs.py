@@ -39,7 +39,7 @@ def plot_run(run_name, csv_path, meta_path, out_dir):
         with open(meta_path) as f:
             meta = json.load(f)
         tc = meta.get('train_config', {})
-        noise = tc.get('noise_prob', '?')
+        noise = tc.get('noise_prob_max', tc.get('noise_prob', '?'))
         mn = meta.get('model_name', '')
         if mn:
             label = mn

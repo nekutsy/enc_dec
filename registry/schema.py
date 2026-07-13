@@ -97,7 +97,7 @@ SELECT
     json_extract(r.train_config_json, '$.lr')           AS lr,
     json_extract(r.train_config_json, '$.optimizer')    AS optimizer,
     json_extract(r.train_config_json, '$.batch_size')   AS batch_size,
-    json_extract(r.train_config_json, '$.noise_prob')   AS noise_prob,
+    json_extract(r.train_config_json, '$.noise_prob_max') AS noise_prob,
     json_extract(r.train_config_json, '$.target_samples') AS target_samples
 FROM runs r
 JOIN architectures a ON a.fingerprint = r.architecture_fp;
