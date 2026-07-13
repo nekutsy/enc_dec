@@ -1,101 +1,32 @@
 # enc_dec — текст в латентный вектор через автоэнкодер
 
-Симметричный автоэнкодер, сжимающий текст (набор символов Unicode) в компактный
-латентный вектор и восстанавливающий его обратно. Обучается как бинарный
-классификатор на 21 бите каждого Unicode codepoint.
+Симметричный автоэнкодер, сжимающий текст в компактный латентный вектор и восстанавливающий обратно.
+Обучается как бинарный классификатор на 21 бите Unicode (BCEWithLogitsLoss).
 
-**Сжатие:** 21:1 (128 символов × 21 бит → 128-мерный латентный вектор).
+**Сжатие:** 21:1 (128 символов × 21 бит → 128-мерный латент).
 
 ---
 
 ## Документация
 
+### Для пользования (`doc/`)
+
 | Файл | Содержание |
 |------|-----------|
-| **[USAGE.md](USAGE.md)** | Полная инструкция по использованию: CLI, команды, JSON-конфиги |
-| **[SWEEP.md](SWEEP.md)** | Sweep-система: стратегии, параметры, дедупликация |
+| **[USAGE.md](doc/USAGE.md)** | CLI-команды: train, infer, overfit, lr-find, plot, resume |
+| **[CONFIG.md](doc/CONFIG.md)** | JSON-формат, все поля ModelConfig/TrainConfig/SweepConfig, `--override` |
+| **[SWEEP.md](doc/SWEEP.md)** | Стратегии sweep (grid, binary, binary_on), solve, vary, presets |
+| **[FEATURES.md](doc/FEATURES.md)** | VAE, denoising, fine-tune, асимметрия |
+| **[GPU.md](doc/GPU.md)** | Правила безопасности GPU ⚠️ критично |
 
----
+### Для разработки (`dev/`)
 
-## Архитектура
-
-Симметричный полносвязный автоэнкодер с настраиваемыми:
-- **Глубина** — задаётся массивом `layer_sizes`, середина = bottleneck
-- **Асимметрия** — можно задать разное количество слоёв в энкодере и декодере (`--enc-n`, `--dec-n`)
-- **Форма** — rectangular, pyramid, interleaved, trapezoid
-- **Активация** — `silu`, `relu`, `gelu`, `leaky_relu`
-- **Нормализация** — `batchnorm` (BatchNorm1d), `layernorm`, `rmsnorm`, `none`
-- **Инициализация** — orthogonal, xavier, kaiming, настраиваемый gain
-- **Dropout** — опциональный
-- **Residual connections** — classic (post-norm) или pre-norm
-
-Каждый скрытый слой: `Linear → Norm → Activation → Dropout`.
-
-Выход декодера — сырые логиты (без sigmoid), подаются в `BCEWithLogitsLoss`.
-
-```
-Input (D) → ... → Bottleneck (B) → ... → Output (D)
-       └─ encoder ─┘          └─ decoder ─┘
-```
-
-Где `D = seq_len × 21` (например 128 × 21 = 2688), `B = bottleneck`.
-
-### Формы архитектуры
-
-| Форма | Описание |
-|-------|----------|
-| **Rectangular** | `[D] + [H]×n + [B] + [H]×n + [D]` — скрытые слои одинаковой ширины |
-| **Pyramid** | `[D] → h₁ → … → hₙ → [B] → hₙ → … → h₁ → [D]` — сужающаяся к центру |
-| **Interleaved** | Wide-слои чередуются с narrow для создания неоднородной структуры |
-| **Trapezoid** | Линейная интерполяция ширины слоёв с α-отклонением |
-
----
-
-## Структура проекта
-
-```
-enc_dec/
-├── bin/
-│   └── enc-dec              # Единая точка входа CLI
-├── cli/                     # CLI-скрипты (train, sweep, infer, overfit, status, main)
-├── model/                   # Autoencoder (nn.Module), архитектурные билдеры
-├── training/                # Цикл обучения, шаг, шедулеры, чекпоинты
-├── orchestration/           # Run (одиночное обучение), Sweep (сетка/бинарный), Workspace
-├── registry/                # SQLite-реестр экспериментов и запусков
-├── inference/               # Инференс: сканер моделей, API, REPL
-├── experiment/              # Конфиги (датаклассы), runtime context, пресеты
-├── encoding/                # Unicode-21 кодировка
-├── core/                    # Базовые типы
-├── configs/                 # Готовые SweepConfig JSON-файлы
-├── scripts/                 # Утилиты (plot, resume, migrate)
-├── data/
-│   ├── dataset/             # .txt файлы (~50M символов русской прозы)
-│   └── cache/               # full_bits.u8 (автосоздаётся)
-├── sessions/                # Чекпоинты, CSV-логи, реестр
-├── USAGE.md                 # Инструкция по использованию
-├── SWEEP.md                 # Sweep-специфика
-└── README.md                # ← этот файл
-```
-
----
-
-## Data Pipeline
-
-### Кодировка Unicode-21
-
-Каждый символ ∈ [U+0000, U+1FFFFF] → 21 бит (старший бит первый).
-
-### SlidingWindowDataset
-
-Окна со **stride=1 символ** — каждый символ появляется в `seq_len` окнах.
-Реализован через `torch.as_strided` на float32-тензоре, без копирования.
-
-### Двухуровневое кэширование
-
-| Уровень | Хранение | Размер (~50M символов) |
-|---------|----------|------------------------|
-| Диск | uint8 packed (`data/cache/full_bits.u8`) | ~0.13 GB |
-| RAM | float32 unpacked | ~4.2 GB |
+| Файл | Содержание |
+|------|-----------|
+| **[ARCHITECTURE.md](dev/ARCHITECTURE.md)** | Устройство автоэнкодера: формы, слои, solve, подсчёт параметров |
+| **[TRAINING.md](dev/TRAINING.md)** | Тренировочный цикл, шедулеры, оптимизаторы, mixed precision |
+| **[REGISTRY.md](dev/REGISTRY.md)** | SQLite-реестр, fingerprint, дедупликация, sessions/ |
+| **[DATA.md](dev/DATA.md)** | Unicode-21, SlidingWindowDataset, кэширование |
 
 ---
 
@@ -118,27 +49,41 @@ bin/enc-dec status
 bin/enc-dec infer --gpu
 ```
 
-Полная инструкция — **[USAGE.md](USAGE.md)**.
+---
+
+## Архитектура (кратко)
+
+Симметричный полносвязный автоэнкодер: `Input → ... → Bottleneck → ... → Output`.
+Каждый слой: `Linear → Norm → Activation → Dropout`.
+
+4 формы: `rectangular`, `pyramid`, `interleaved`, `trapezoid`.
+Активации: SiLU (default), ReLU, GELU, LeakyReLU.
+Нормализация: BatchNorm1d, LayerNorm, RMSNorm, none.
+
+Подробно: [dev/ARCHITECTURE.md](dev/ARCHITECTURE.md).
 
 ---
 
-## Детали тренировки
+## Структура проекта
 
-### Функция потерь
-
-`BCEWithLogitsLoss` — каждый из 21 бита классифицируется независимо.
-
-### LR-шедулеры
-
-`onecycle` (по умолчанию), `plateau`, `cosine`, `greedy` (адаптивный zeroth-order с пробами), `greedy_simple`, `greedy_grad`, `none`.
-
-### Оптимизаторы
-
-`adamw_fused` (fused CUDA), `adamw`, `lion` (EvoLved Sign Momentum), `sophia`, `sgd`, `nag`.
-
-### Mixed precision
-
-Автоматически на CUDA: `autocast(bfloat16)` + `GradScaler`.
+```
+enc_dec/
+├── bin/enc-dec              # Единая точка входа CLI
+├── cli/                     # CLI-обработчики
+├── model/                   # Autoencoder, архитектурные билдеры, формы
+├── training/                # Цикл обучения, шедулеры, оптимизаторы
+├── orchestration/           # Run, Sweep, Workspace
+├── registry/                # SQLite-реестр
+├── inference/               # Сканер моделей, API, REPL
+├── experiment/              # Датаклассы конфигов, пресеты
+├── encoding/                # Unicode-21
+├── data/                    # Датасет + кэш
+├── configs/                 # Готовые SweepConfig JSON (~30 шт.)
+├── sessions/                # Чекпоинты, логи, registry.db
+├── doc/                     # Документация «для пользования»
+├── dev/                     # Документация «для разработки»
+└── scripts/                 # Утилиты (plot, migrate, resume)
+```
 
 ---
 
