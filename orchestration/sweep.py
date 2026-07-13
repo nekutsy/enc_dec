@@ -220,9 +220,9 @@ class Sweep:
                 tag = ' ✓' if done else ''
                 enc_n = arch.get('enc_n', arch.get('n', '?'))
                 dec_n = arch.get('dec_n', arch.get('n', '?'))
-                print(f'{v:>8}  {enc_n:>5}  {dec_n:>5}  {arch["b"]:>7.4g}  {arch["n_params"]:>10,}{tag}')
+                print(f'{str(v):>8}  {enc_n:>5}  {dec_n:>5}  {arch["b"]:>7.4g}  {arch["n_params"]:>10,}{tag}')
             except Exception as e:
-                print(f'{v:>8}  ERROR: {e}')
+                print(f'{str(v):>8}  ERROR: {e}')
         print()
 
         # ── Adaptive loop ──
