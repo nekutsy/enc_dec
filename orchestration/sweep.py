@@ -48,9 +48,13 @@ class GridStrategy:
     def vary_values(self) -> list:
         return self._values
 
+    def _key(self, v):
+        """Normalize sweep value to a hashable key."""
+        return tuple(v) if isinstance(v, list) else v
+
     def next_candidate(self, completed: dict) -> tuple | None:
         for v in self._values:
-            if v not in completed:
+            if self._key(v) not in completed:
                 return (self.vary_name, v)
         return None
 
@@ -236,7 +240,7 @@ class Sweep:
                 arch = resolve_architecture(vary_value, vary_name, cfg)
             except Exception as e:
                 print(f'  ⚠ resolve error: {e}')
-                completed[vary_value] = 1e9
+                completed[self.strategy._key(vary_value)] = 1e9
                 continue
 
             run, created = Run.find_or_create(
@@ -249,7 +253,7 @@ class Sweep:
                     val = rd.get('final_train_loss')
                     print(f'  already done (loss={val})')
                     self.registry.link_run(exp_id, run.run_id, vary_value)
-                    completed[vary_value] = val if val is not None else 1e9
+                    completed[self.strategy._key(vary_value)] = val if val is not None else 1e9
                     continue
                 elif rd and rd.get('status') == 'done':
                     stale = rd.get('total_samples', 0)
@@ -263,9 +267,9 @@ class Sweep:
             self.registry.link_run(exp_id, run.run_id, vary_value)
 
             if result.final_train_loss is not None:
-                completed[vary_value] = result.final_train_loss
+                completed[self.strategy._key(vary_value)] = result.final_train_loss
             else:
-                completed[vary_value] = 1e9
+                completed[self.strategy._key(vary_value)] = 1e9
 
             print()
 
@@ -287,8 +291,8 @@ class Sweep:
         print(f'RESULTS: {self.exp_name}')
         print(f'{"vary":>8}  {"train_loss":>10}')
         print('-' * 25)
-        for v in sorted(self._results):
-            print(f'{v:>8}  {self._results[v]:>10.6f}')
+        for v in sorted(self._results, key=lambda k: str(k)):
+            print(f'{str(v):>8}  {self._results[v]:>10.6f}')
         best = min(self._results, key=self._results.get)
         print(f'\n  ★ best: {self.cfg.sweep.vary}={best}  train={self._results[best]:.6f}')
         print(f'{"=" * 55}')

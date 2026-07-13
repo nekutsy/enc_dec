@@ -158,7 +158,17 @@ def resolve_architecture(vary_value, vary_name: str,
     if vary_name in MODEL_LEVEL_VARY:
         setattr(mc, vary_name, vary_value)
     elif vary_name in TRAIN_LEVEL_VARY:
-        setattr(sweep_config.training, vary_name, vary_value)
+        tc = sweep_config.training
+        if vary_name == 'noise_prob_min' and isinstance(vary_value, list):
+            tc.noise_prob_min, tc.noise_prob_max = vary_value[0], vary_value[1]
+        elif vary_name == 'noise_std_min' and isinstance(vary_value, list):
+            tc.noise_std_min, tc.noise_std_max = vary_value[0], vary_value[1]
+        elif vary_name == 'noise_prob_min':
+            tc.noise_prob_min = tc.noise_prob_max = vary_value
+        elif vary_name == 'noise_std_min':
+            tc.noise_std_min = tc.noise_std_max = vary_value
+        else:
+            setattr(tc, vary_name, vary_value)
     elif vary_name in _LEGACY_VARY:
         if vary_name == 'noise_prob':
             sweep_config.training.noise_prob_min = vary_value
