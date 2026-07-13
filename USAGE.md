@@ -49,8 +49,16 @@ bin/enc-dec train --config configs/n8_rect_bn160_50M.json
 # Свой LR + plateau scheduler
 bin/enc-dec train --n 2 --budget 160M --samples 120M --lr 0.002 --scheduler plateau
 
-# С шумом
-bin/enc-dec train --n 3 --budget 160M --samples 50M --noise-prob 0.25 --noise-std 3.0
+# С шумом (фиксированный 25%)
+bin/enc-dec train --n 3 --budget 160M --samples 50M --noise-prob 0.25
+
+# С шумом — per-batch диапазон (каждый сэмпл получает свой уровень шума)
+bin/enc-dec train --n 3 --budget 160M --samples 50M \
+  --noise-prob-min 0.0 --noise-prob-max 0.3
+
+# Указать стратегию сэмплинга и stride
+bin/enc-dec train --n 3 --budget 160M --samples 50M \
+  --noise-strategy uniform --noise-stride 128
 
 # GPU force
 bin/enc-dec train --n 3 --budget 160M --device cuda
@@ -90,8 +98,14 @@ enc-dec train --pretrain-from cce656d8f25a --samples 100M --lr 0.0001 --schedule
 | `--lr` | 0.001 | Learning rate |
 | `--scheduler` | onecycle | onecycle / plateau / cosine / greedy / greedy_simple / greedy_grad / none |
 | `--optimizer` | adamw_fused | adamw_fused / adamw / lion / sophia / sgd / nag |
-| `--noise-prob` | 0.0 | Доля зашумлённых символов |
-| `--noise-std` | 3.0 | σ гауссовского шума на uint21 |
+| `--noise-prob` | — | Фиксированная доля зашумлённых символов (0..1, синоним min=max) |
+| `--noise-prob-min` | 0.0 | Нижняя граница per-batch сэмплинга prob |
+| `--noise-prob-max` | 0.0 | Верхняя граница (0→disabled) |
+| `--noise-std` | — | Фиксированное σ шума (синоним min=max) |
+| `--noise-std-min` | 3.0 | Нижняя граница per-batch сэмплинга std |
+| `--noise-std-max` | 3.0 | Верхняя граница |
+| `--noise-strategy` | linear | linear (интерполяция по idx % stride) / uniform (случайный) |
+| `--noise-stride` | 256 | Шаг интерполяции для linear (0→=batch_size) |
 | `--vae` | false | Включить VAE-режим (μ/logvar head + KL loss) |
 | `--vae-beta` | 1.0 | β вес для KL-терма (0.5 = слабее регуляризация, 2.0 = сильнее) |
 | `--activation` | silu | silu / relu / gelu / leaky_relu |
@@ -160,6 +174,51 @@ bin/enc-dec sweep grid --vary noise_prob=0.0,0.25 --fixed n=6 --solve b --budget
 > sample 5             # сгенерировать 5 сэмплов
 > info                 # покажет mode: VAE  β=1.0
 ```
+
+### Зашумление (denoising)
+
+Модель обучается как denoising autoencoder: вход зашумляется, target остаётся чистым.
+Шум добавляется на уровне uint21-значений: с вероятностью `noise_prob` к целочисленному
+значению символа добавляется `N(0, noise_std²)`, затем округление и clamp в `[0, 2²¹−1]`.
+
+**Per-batch сэмплинг:** `noise_prob` и `noise_std` не фиксированы, а берутся из диапазона
+`[min, max]` для каждого семпла. Две стратегии:
+
+| Стратегия | Поведение |
+|-----------|----------|
+| `linear` (default) | `noise = min + (max - min) · (idx % stride) / (stride - 1)`. Каждый батч гарантированно покрывает весь диапазон. Детерминированно по индексу семпла. |
+| `uniform` | Случайный `uniform(min, max)` для каждого семпла. |
+
+**Семплы с `noise_prob ≤ 0` сразу возвращаются без шума** — при `min=0` часть батча всегда чистая.
+
+```bash
+# Фиксированный шум (min=max) — старый синтаксис
+bin/enc-dec train --noise-prob 0.25
+
+# Диапазон [0, 0.5] с линейной интерполяцией (default)
+bin/enc-dec train --noise-prob-min 0.0 --noise-prob-max 0.5
+
+# То же, но uniform random
+bin/enc-dec train --noise-prob-min 0.0 --noise-prob-max 0.5 --noise-strategy uniform
+
+# Варьировать и prob, и std одновременно
+bin/enc-dec train --noise-prob-min 0.0 --noise-prob-max 0.3 \
+  --noise-std-min 1.0 --noise-std-max 5.0
+```
+
+**Sweep с разными режимами шума:**
+
+```json
+{
+  "sweep": {
+    "vary": "noise_prob_min",
+    "values": [0.0, 0.25, 0.5, [0.0, 0.5]]
+  }
+}
+```
+
+Скалярные значения (0.0, 0.25, 0.5) задают фиксированный min=max.
+Список `[0.0, 0.5]` задаёт диапазон — min≠max, linear стратегия по умолчанию.
 
 ---
 
@@ -294,8 +353,12 @@ RESUME_TARGET=20000000 bin/enc-dec resume
     "early_stop_patience": 20,
     "train_ratio": 0.999,
     "num_workers": 2,
-    "noise_prob": 0.0,
-    "noise_std": 3.0,
+    "noise_prob_min": 0.0,
+    "noise_prob_max": 0.0,
+    "noise_std_min": 3.0,
+    "noise_std_max": 3.0,
+    "noise_strategy": "linear",
+    "noise_stride": 256,
     "vae_beta": 1.0
   },
   "sweep": {
